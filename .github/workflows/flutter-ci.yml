@@ -1,0 +1,88 @@
+name: Flutter verification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-verification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flutter:
+    name: Flutter analyze, tests, and debug APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          # Matches the SDK baseline documented in android/settings.gradle.
+          flutter-version: '3.44.8'
+          channel: stable
+          cache: true
+
+      - name: Prepare non-production configuration and logs
+        run: |
+          mkdir -p ci-logs
+          cp lib/authentication/auth_services/cred.example.dart lib/authentication/auth_services/cred.dart
+          flutter --version | tee ci-logs/flutter-version.txt
+
+      - name: Resolve Flutter dependencies
+        run: flutter pub get | tee ci-logs/pub-get.log
+
+      - name: Analyze (errors, warnings, and infos are fatal)
+        run: flutter analyze --no-pub --fatal-warnings --fatal-infos 2>&1 | tee ci-logs/analyze.log
+
+      - name: Run existing tests
+        run: flutter test --no-pub --reporter expanded 2>&1 | tee ci-logs/test.log
+
+      - name: Build verification APK
+        run: flutter build apk --debug --no-pub 2>&1 | tee ci-logs/build-apk.log
+
+      - name: Upload compiler evidence and resolved dependencies
+        id: diagnostics
+        if: always()
+        # Console logs remain available even when artifact storage is full.
+        continue-on-error: true
+        uses: actions/upload-artifact@v6
+        with:
+          name: flutter-verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ci-logs/
+            pubspec.lock
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Report unavailable diagnostic artifact
+        if: always() && steps.diagnostics.outcome == 'failure'
+        run: |
+          echo '::warning::Diagnostic artifact upload failed. Read the step logs above for compiler output and the upload error. If storage quota is exhausted, remove obsolete GitHub Actions artifacts before rerunning.'
+          echo 'Diagnostic artifact upload failed; compiler output remains in the workflow step logs. APK upload is still required for a successful build job.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload non-production debug APK
+        uses: actions/upload-artifact@v6
+        with:
+          name: atomic-notes-verification-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 1

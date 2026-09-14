@@ -380,3 +380,8 @@ Built by **DevBehindYou** (Ashutosh Sharma). Web development, SEO, and applied A
 <div align="center">
   <sub>Atomic Notes. Local-first · no tracking · no ads · your notes are yours.</sub>
 </div>
+
+## Hosted verification
+
+See [CI.md](CI.md) for the standalone Flutter verification workflow and the
+separate, optional GitHub Pages showcase setup.

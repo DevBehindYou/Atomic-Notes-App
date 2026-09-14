@@ -6,9 +6,8 @@ name: Deploy showcase site (GitHub Pages)
 #   Settings → Pages → Build and deployment → Source → "GitHub Actions".
 #   That is it. No branch to pick, this workflow does the rest.
 #
-# This is the public showcase repo. The workflow uploads only docs/ (the
-# showcase site). The app source lives in a separate private repo and is not
-# part of this deploy.
+# This workflow uploads only docs/. Flutter analysis, tests and APK creation
+# run separately in flutter-ci.yml and do not require GitHub Pages.
 
 on:
   push:
@@ -32,22 +31,42 @@ concurrency:
 jobs:
   deploy:
     name: Build + deploy docs/
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Verify Pages setup
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const settings = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/settings/pages`;
+            try {
+              const { data } = await github.rest.repos.getPages(context.repo);
+              if (data.build_type !== 'workflow') {
+                core.setFailed(`Set Pages > Build and deployment > Source to GitHub Actions: ${settings}`);
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              const message = `GitHub Pages is not available for this repository/token. Enable Pages and select GitHub Actions at ${settings}. Check repository plan eligibility if Pages is unavailable. This setting is not needed for the Flutter verification workflow.`;
+              await core.summary.addHeading('Pages setup required').addRaw(message).write();
+              core.setFailed(message);
+            }
 
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload docs/ as the Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: docs
+          retention-days: 1
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
