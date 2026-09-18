@@ -50,6 +50,7 @@ class ApiClient {
   Stream<void> get onSessionEnded => _sessionEndedController.stream;
 
   late final GoogleSignIn _google = GoogleSignIn(
+    forceCodeForRefreshToken: true,
     scopes: const ['email', 'https://www.googleapis.com/auth/drive.file'],
     serverClientId: _cred.GOOGLE_SERVER_CLIENT_ID,
   );
@@ -164,20 +165,33 @@ class ApiClient {
   /// updated_at/enc_v/payload) — deliberately unchanged so note.dart needs
   /// no edits. Returns per-row results; callers that used to ignore the
   /// Supabase upsert's return value can keep doing so.
-  Future<List<Map<String, dynamic>>> pushNotes(List<Map<String, dynamic>> rows) async {
-    final res = await http.post(_uri('/notes/push'), headers: _headers, body: jsonEncode({'rows': rows}));
-    final data = _decode(res) as Map;
+  Future<List<Map<String, dynamic>>> pushNotes(List<Map<String, dynamic>> rows, {
+    required String requestId, bool instant = false,
+  }) async {
+    final res = await http.post(_uri('/notes/push'), headers: _headers,
+      body: jsonEncode({'rows': rows, 'requestId': requestId, 'mode': instant ? 'instant' : 'standard'}))
+      .timeout(const Duration(seconds: 90));
+    final dynamic data;
+    if (res.statusCode == 502) {
+      final decoded = jsonDecode(res.body);
+      if (decoded is! Map || decoded['error'] != 'note_sync_failed') {
+        throw ApiException('http_502', 502);
+      }
+      data = decoded;
+    } else {
+      data = _decode(res);
+    }
     return List<Map<String, dynamic>>.from(data['results'] as List);
   }
 
-  Future<List<Map<String, dynamic>>> pullNotes({DateTime? since, bool encOnly = false}) async {
+  Future<Map<String, dynamic>> pullNotes({int? after, bool encOnly = false}) async {
     final query = <String, String>{
       if (encOnly) 'encOnly': 'true',
-      if (since != null) 'since': since.toIso8601String(),
+      if (after != null) 'after': after.toString(),
     };
-    final res = await http.get(_uri('/notes/pull', query), headers: _headers);
-    final data = _decode(res) as Map;
-    return List<Map<String, dynamic>>.from(data['rows'] as List);
+    final res = await http.get(_uri('/notes/pull', query), headers: _headers)
+      .timeout(const Duration(seconds: 90));
+    return Map<String, dynamic>.from(_decode(res) as Map);
   }
 
   Future<int> remoteNoteCount() async {

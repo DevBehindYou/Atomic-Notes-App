@@ -56,6 +56,19 @@ class NotesRepository extends ChangeNotifier {
 
   String? lastError;
   DateTime? lastSyncedAt;
+  int? _syncCursor;
+  static const _pendingPushKey = '__pending_sync_operation';
+
+  /// Reserved Hive key holding the last pull cursor of [_ownerKey]'s account, so
+  /// a restart continues where the last pull ended instead of refetching every
+  /// note from Google Drive.
+  static const String _cursorKey = '__sync_cursor__';
+
+  /// A push carries at most 20 notes; a sync sends up to this many batches.
+  static const int _maxPushBatches = 5;
+
+  /// Tail of the serialized Hive write queue (see [_persist]). Never fails.
+  Future<void> _writeChain = Future<void>.value();
 
   /// In-memory index, id -> note.
   final Map<String, Note> _notes = {};
@@ -76,17 +89,20 @@ class NotesRepository extends ChangeNotifier {
 
   Future<void> _loadFromDisk() async {
     _notes.clear();
+    _syncCursor = null;
     // A cache written by a different account — a previous user whose session
     // expired without an explicit logout — must never surface for this one.
     // (Explicit logout already wipes the box; this covers the expiry path.)
     final owner = _box.get(_ownerKey);
     final uid = _userId;
     if (owner is String && uid != null && owner != uid) {
+      await _drainWrites();
       await _box.clear();
       return;
     }
+    if (uid != null) _restoreCursor(uid);
     for (final raw in _box.values) {
-      if (raw is Map) {
+      if (raw is Map && raw['id'] is String) {
         final opened = await _open(raw);
         if (opened == null) continue; // encrypted + locked: load after unlock
         final n = Note.fromMap(opened);
@@ -160,9 +176,13 @@ class NotesRepository extends ChangeNotifier {
     final owner = _box.get(_ownerKey);
     if (owner is String && owner != uid) {
       _notes.clear();
+      _syncCursor = null;
+      lastSyncedAt = null;
+      await _drainWrites();
       await _box.clear();
       notifyListeners();
     }
+    _restoreCursor(uid);
     await _box.put(_ownerKey, uid);
     // MIGRATION NOTE: `_listenRealtime()` used to be called here — removed,
     // the new backend has no realtime endpoint (see class doc comment above).
@@ -185,6 +205,8 @@ class NotesRepository extends ChangeNotifier {
   /// while a same-user re-login can still reuse the local cache.
   void clearMemory() {
     _notes.clear();
+    _syncCursor = null;
+    lastSyncedAt = null;
     notifyListeners();
   }
 
@@ -242,7 +264,7 @@ class NotesRepository extends ChangeNotifier {
   Future<void> save(Note note) async {
     note.touch();
     _notes[note.id] = note;
-    await _box.put(note.id, await _sealLocal(note));
+    await _persist(note.id);
     notifyListeners();
     // No auto-upload: the note is saved locally and marked dirty; it reaches the
     // cloud only on a manual (instant) sync or the hourly background sync.
@@ -255,7 +277,7 @@ class NotesRepository extends ChangeNotifier {
       if (n == null) continue;
       n.deleted = true;
       n.touch();
-      await _box.put(n.id, await _sealLocal(n));
+      await _persist(n.id);
     }
     notifyListeners();
     // Saved locally as a tombstone; the deletion reaches the cloud on the next
@@ -265,9 +287,46 @@ class NotesRepository extends ChangeNotifier {
   /// Wipes the local cache only — used on logout. Does not touch the server.
   Future<void> clearLocal() async {
     _notes.clear();
+    _syncCursor = null;
+    // Let an in-flight write finish first: it would otherwise land after the
+    // clear and leave this account's note on disk for the next one.
+    await _drainWrites();
     await _box.clear();
     lastSyncedAt = null;
     notifyListeners();
+  }
+
+  // ---- persistence ------------------------------------------------------
+
+  /// Writes note [id] to Hive, one write at a time. Each write reads the note
+  /// when it runs and sealing is asynchronous, so unqueued writers could finish
+  /// out of order and let an older snapshot (for example an acknowledgment that
+  /// clears `dirty`) overwrite a newer local edit. Every change to a note is
+  /// followed by a call here, so the last write on disk reflects the last
+  /// change. A write for another account, or for a note no longer in memory,
+  /// is dropped rather than put into the wrong cache.
+  Future<void> _persist(String id) {
+    final uid = _userId;
+    final write = _writeChain.then((_) async {
+      final note = _notes[id];
+      if (note == null || _userId != uid) return;
+      await _box.put(id, await _sealLocal(note));
+    });
+    _writeChain = write.catchError((_) {});
+    return write;
+  }
+
+  Future<void> _drainWrites() => _writeChain;
+
+  /// Loads the pull cursor saved for [uid], if this cache belongs to that account.
+  void _restoreCursor(String uid) {
+    final cursor = _box.get(_cursorKey);
+    _syncCursor = _box.get(_ownerKey) == uid && cursor is int ? cursor : null;
+  }
+
+  Future<void> _resetCursor() async {
+    _syncCursor = null;
+    await _box.delete(_cursorKey);
   }
 
   // ---- sync -------------------------------------------------------------
@@ -276,7 +335,7 @@ class NotesRepository extends ChangeNotifier {
   /// connection and still have no route out (captive portals, hotel wifi), so
   /// a connectivity check alone isn't enough — without a deadline the request
   /// just sits there.
-  static const Duration _netTimeout = Duration(seconds: 20);
+
 
   /// Push local changes, then pull remote ones. Safe to call often.
   ///
@@ -300,61 +359,32 @@ class NotesRepository extends ChangeNotifier {
       return false;
     }
 
-    // Energy gate: only charge when there are local changes to upload. The
-    // charge happens BEFORE the push (so a zero balance can't sync), and is
-    // refunded below if the upload fails — energy is never lost to a dropped
-    // network. [charged] is the exact amount taken (10 instant; 0 or 5 standard).
-    final hasPending = _notes.values.any((n) => n.dirty);
-    var charged = 0;
-    if (hasPending) {
-      if (instant) {
-        final err = await EnergyService.instance.spendInstant();
-        if (err != null) {
-          lastError =
-              'Not enough Atomic Energy to sync — changes saved on this device';
-          notifyListeners();
-          return false;
-        }
-        charged = EnergyService.syncInstantCost;
-      } else {
-        final amt = await EnergyService.instance.spendStandard();
-        if (amt == null) {
-          lastError =
-              'Not enough Atomic Energy to sync — changes saved on this device';
-          notifyListeners();
-          return false;
-        }
-        charged = amt;
-      }
-    }
-
+    if (_syncing || _userId != uid) return false;
+    // Acquire locally before the first await that starts a sync operation.
     _syncing = true;
     lastError = null;
     notifyListeners();
     try {
-      await _push(uid).timeout(_netTimeout);
-      await _pull(uid).timeout(_netTimeout);
-      lastSyncedAt = DateTime.now();
+      // A push carries at most 20 notes: keep sending until nothing is waiting,
+      // so a completed sync means every queued change reached the server.
+      var drained = false;
+      for (var batch = 0; batch < _maxPushBatches && !drained; batch++) {
+        drained = !await _push(uid, instant: instant);
+      }
+      await _pull(uid);
+      unawaited(EnergyService.instance.refresh());
+      if (!drained) {
+        lastError = '$pendingCount changes are still waiting to sync. Sync again to send the rest.';
+        return false;
+      }
       return true;
     } on TimeoutException {
-      if (charged > 0) {
-        unawaited(
-            EnergyService.instance.refund(charged, 'Sync refund (timeout)'));
-      }
-      lastError = 'Sync timed out — changes are saved on this device';
-      debugPrint('NotesRepository.syncNow timed out');
+      lastError = 'Sync is taking longer than expected. Your changes are saved; retry to recover the same operation.';
       return false;
     } catch (e) {
-      if (charged > 0) {
-        unawaited(
-            EnergyService.instance.refund(charged, 'Sync refund (error)'));
-      }
-      // The server enforces the allowance too (migration 003). Translate its
-      // error rather than showing the raw Postgres exception.
       lastError = e.toString().contains('note_limit_reached')
-          ? 'Note limit reached on the server — delete a note and sync again'
+          ? 'Note limit reached — delete a note and sync again'
           : e.toString();
-      debugPrint('NotesRepository.syncNow failed: $e');
       return false;
     } finally {
       _syncing = false;
@@ -362,35 +392,94 @@ class NotesRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> _push(String uid) async {
-    final dirty = _notes.values.where((n) => n.dirty).toList();
-    if (dirty.isEmpty) return;
-
-    // One batch call. `id` is the conflict target server-side (upsert), so a
-    // note created offline on two devices can't duplicate. Content is sealed
-    // first when encryption is on. Same row shape as before — only the
-    // transport changed, from a Supabase upsert to this API call.
-    final rows = await Future.wait(dirty.map((n) => _sealRemote(n, uid)));
-    await _api.pushNotes(rows);
-
-    for (final n in dirty) {
-      n.dirty = false;
-      await _box.put(n.id, await _sealLocal(n));
+  /// Sends one batch. Returns true when more changes are still waiting.
+  Future<bool> _push(String uid, {required bool instant}) async {
+    if (_userId != uid) return false;
+    final saved = _box.get(_pendingPushKey);
+    Map<String, dynamic>? pending = saved is Map && saved['userId'] == uid
+        ? Map<String, dynamic>.from(saved) : null;
+    if (pending == null) {
+      final dirty = _notes.values.where((n) => n.dirty).take(20).map((n) => n.copy()).toList();
+      if (dirty.isEmpty) return false;
+      final rows = await Future.wait(dirty.map((n) => _sealRemote(n, uid)));
+      if (_userId != uid) return false;
+      pending = {
+        'requestId': newId(), 'userId': uid, 'instant': instant, 'rows': rows,
+        'versions': {for (final n in dirty) n.id: n.updatedAt.toIso8601String()},
+        'conflictIds': {for (final n in dirty) n.id: newId()},
+      };
+      await _box.put(_pendingPushKey, pending);
     }
+    final rows = (pending['rows'] as List).map((row) => Map<String, dynamic>.from(row as Map)).toList();
+    final List<Map<String, dynamic>> results;
+    try {
+      results = await _api.pushNotes(rows, requestId: pending['requestId'] as String, instant: pending['instant'] == true);
+    } on ApiException catch (e) {
+      // Validation happens before the operation is charged/recorded. Retry corrected data.
+      if (e.statusCode == 400 || ['note_limit_reached', 'insufficient_energy', 'note_id_conflict'].contains(e.code)) {
+        if (_userId == uid) await _box.delete(_pendingPushKey);
+      }
+      rethrow;
+    }
+    if (_userId != uid) return false;
+    final versions = pending['versions'] as Map;
+    var conflicted = false;
+    var failed = false;
+    for (final result in results) {
+      final id = result['id'] as String;
+      final local = _notes[id];
+      if (local == null) continue;
+      if (result['ok'] != true) {
+        failed = true;
+        if (result['error'] == 'note_conflict') conflicted = true;
+        if (result['error'] == 'note_conflict' && local.dirty) {
+          final copy = Note(id: (pending['conflictIds'] as Map)[id] as String, kind: local.kind, title: '${local.title.length > 270 ? local.title.substring(0, 270) : local.title} (conflict copy)',
+            body: local.body, items: local.items.map((i) => i.copy()).toList(), dirty: true);
+          _notes[copy.id] = copy;
+          await _persist(copy.id);
+          // The other version is fetched again below and replaces this one.
+          local.dirty = false;
+          local.serverVersion = 0;
+          await _persist(id);
+        }
+        continue;
+      }
+      local.serverVersion = (result['version'] as num).toInt();
+      if (local.updatedAt.toIso8601String() == versions[id]) {
+        local.dirty = false;
+        local.updatedAt = DateTime.parse(result['updated_at'] as String).toUtc();
+      }
+      if (_userId != uid) return false;
+      await _persist(id);
+    }
+    if (_userId != uid) return false;
+    await _box.delete(_pendingPushKey);
+    if (failed) {
+      // The pull cursor is already past the version that conflicted, so start over.
+      if (conflicted) await _resetCursor();
+      notifyListeners();
+      await _pull(uid);
+      throw ApiException(
+          conflicted
+              ? 'Some notes changed on another device. Your edits are saved as separate copies.'
+              : 'Some notes could not be uploaded. They stay on this device and will retry.',
+          409);
+    }
+    return _notes.values.any((n) => n.dirty);
   }
 
   Future<void> _pull(String uid) async {
-    // Incremental: only rows touched since the last successful pull. The
-    // first pull after install fetches everything.
-    //
-    // A device that cannot decrypt must not even fetch ciphertext: knowing
-    // the account password is not enough to reach vault notes — same
-    // encOnly filter the old Supabase `.eq('enc_v', 0)` applied.
-    final rows = await _api.pullNotes(
-      since: lastSyncedAt,
-      encOnly: !Vault.instance.isUnlocked,
-    );
-    await _mergeAll(rows, uid);
+    var more = true;
+    while (more && _userId == uid) {
+      final response = await _api.pullNotes(after: _syncCursor, encOnly: !Vault.instance.isUnlocked);
+      if (_userId != uid) return;
+      await _mergeAll(List<Map<String, dynamic>>.from(response['rows'] as List), uid);
+      if (_userId != uid) return;
+      _syncCursor = (response['nextCursor'] as num).toInt();
+      await _box.put(_cursorKey, _syncCursor);
+      more = response['hasMore'] == true;
+      lastSyncedAt = DateTime.parse(response['cursor'] as String).toUtc();
+    }
   }
 
   /// Last-write-wins per note, on the server's `updated_at`.
@@ -411,17 +500,17 @@ class NotesRepository extends ChangeNotifier {
 
       if (local == null) {
         _notes[remote.id] = remote;
-        await _box.put(remote.id, await _sealLocal(remote));
+        await _persist(remote.id);
         changed = true;
         continue;
       }
 
       // Never let a pull clobber an edit that hasn't been pushed yet.
-      if (local.dirty && local.updatedAt.isAfter(remote.updatedAt)) continue;
+      if (local.dirty) continue;
 
-      if (remote.updatedAt.isAfter(local.updatedAt)) {
+      if (remote.serverVersion > local.serverVersion) {
         _notes[remote.id] = remote;
-        await _box.put(remote.id, await _sealLocal(remote));
+        await _persist(remote.id);
         changed = true;
       }
     }
@@ -438,9 +527,9 @@ class NotesRepository extends ChangeNotifier {
     if (!Vault.instance.isUnlocked) return;
     if (_notes.isEmpty) return;
     debugPrint('NotesRepository: migrating ${_notes.length} notes into the vault');
-    for (final n in _notes.values) {
+    for (final n in _notes.values.toList()) {
       n.dirty = true;
-      await _box.put(n.id, await _sealLocal(n));
+      await _persist(n.id);
     }
     notifyListeners();
     await syncNow();
@@ -452,6 +541,8 @@ class NotesRepository extends ChangeNotifier {
   /// into the vault.
   Future<void> reloadAfterUnlock() async {
     await _loadFromDisk();
+    // A locked pull skipped encrypted rows but still advanced the cursor.
+    await _resetCursor();
     lastSyncedAt = null;
     notifyListeners();
     await syncNow();
@@ -462,7 +553,7 @@ class NotesRepository extends ChangeNotifier {
   /// check a recovery phrase without reaching the server.
   String? get sampleCiphertext {
     for (final raw in _box.values) {
-      if (raw is Map) {
+      if (raw is Map && raw['id'] is String) {
         final v = raw['enc_v'];
         final p = raw['payload'];
         if (v is int && v >= 1 && p is String && p.isNotEmpty) return p;

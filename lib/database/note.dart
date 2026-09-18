@@ -20,8 +20,8 @@ class TodoItem {
   Map<String, dynamic> toMap() => {'t': text, 'd': done};
 
   factory TodoItem.fromMap(Map<dynamic, dynamic> m) => TodoItem(
-        text: (m['t'] ?? '').toString(),
-        done: m['d'] == true,
+        text: (m['t'] ?? m['text'] ?? '').toString(),
+        done: (m['d'] ?? m['done']) == true,
       );
 
   TodoItem copy() => TodoItem(text: text, done: done);
@@ -48,6 +48,7 @@ class Note {
 
   /// Local-only: this note has changes that haven't been pushed yet.
   bool dirty;
+  int serverVersion;
 
   Note({
     required this.id,
@@ -60,6 +61,7 @@ class Note {
     DateTime? createdAt,
     DateTime? updatedAt,
     this.dirty = false,
+    this.serverVersion = 0,
   })  : items = items ?? [],
         createdAt = createdAt ?? DateTime.now().toUtc(),
         updatedAt = updatedAt ?? DateTime.now().toUtc();
@@ -103,6 +105,7 @@ class Note {
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'dirty': dirty,
+        'serverVersion': serverVersion,
       };
 
   factory Note.fromMap(Map<dynamic, dynamic> m) => Note(
@@ -119,6 +122,7 @@ class Note {
         createdAt: _parseDate(m['createdAt']),
         updatedAt: _parseDate(m['updatedAt']),
         dirty: m['dirty'] == true,
+        serverVersion: (m['serverVersion'] as num?)?.toInt() ?? 0,
       );
 
   // ---- Supabase (remote) -----------------------------------------------
@@ -126,6 +130,7 @@ class Note {
   Map<String, dynamic> toRemote(String userId) => {
         'id': id,
         'user_id': userId,
+        'base_version': serverVersion,
         'kind': kind.name,
         'title': title,
         'body': body,
@@ -147,6 +152,7 @@ class Note {
         updatedAt: _parseDate(m['updated_at']),
         // Anything from the server is by definition already pushed.
         dirty: false,
+        serverVersion: (m['version'] as num?)?.toInt() ?? 0,
       );
 
   static List<TodoItem> _decodeItems(dynamic raw) {
@@ -175,6 +181,7 @@ class Note {
         createdAt: createdAt,
         updatedAt: updatedAt,
         dirty: dirty,
+        serverVersion: serverVersion,
       );
 }
 
