@@ -584,38 +584,144 @@ class NotesRepository extends ChangeNotifier {
     return null;
   }
 
+  // ---- recycle bin ------------------------------------------------------
+
+  /// Deleted notes this device still holds, most recently deleted first.
+  ///
+  /// A deleted note is a tombstone that keeps its content, so it can be put
+  /// back. Its cloud file sits in the Google Drive trash meanwhile.
+  List<Note> get binNotes {
+    final list = _notes.values.where((n) => n.deleted).toList();
+    list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return list;
+  }
+
+  /// Puts a deleted note back. False when it is not in the bin or the note
+  /// limit leaves no room for it.
+  Future<bool> restoreNote(String id) async {
+    final n = _notes[id];
+    if (n == null || !n.deleted || isAtLimit) return false;
+    n.deleted = false;
+    n.touch();
+    await _persist(id);
+    notifyListeners();
+    return true;
+  }
+
+  /// Removes deleted notes from this device for good. A deletion that has not
+  /// reached the cloud yet is synced first: forgetting it locally would let the
+  /// note come back from the cloud on the next pull. Returns how many were
+  /// removed; 0 means nothing was, for example because that sync failed.
+  Future<int> deleteForever(Iterable<String> ids) async {
+    final targets = ids.where((id) => _notes[id]?.deleted == true).toList();
+    if (targets.isEmpty) return 0;
+    bool unsent() => targets.any((id) {
+          final n = _notes[id];
+          return n != null && n.dirty && n.serverVersion > 0;
+        });
+    if (unsent()) {
+      if (!SyncStatusHelper.isSyncOn) return 0;
+      await syncNow();
+      if (unsent()) return 0;
+    }
+    var removed = 0;
+    for (final id in targets) {
+      if (_notes.remove(id) != null) removed++;
+    }
+    // Let an in-flight write finish, then drop the stored copies.
+    await _drainWrites();
+    for (final id in targets) {
+      await _box.delete(id);
+    }
+    notifyListeners();
+    return removed;
+  }
+
   // ---- maintenance ------------------------------------------------------
 
-  /// Number of live notes on the server, for the Database screen.
+  /// Number of live notes in the cloud, or null when the cloud cannot be reached.
   ///
-  /// Counts rows, not readable notes: an encrypted row still counts while this
-  /// device is locked, which is what makes the on-device and in-cloud numbers
-  /// comparable.
-  Future<int> remoteCount() async {
-    final uid = _userId;
-    if (uid == null) return 0;
+  /// Reads a count only: nothing is pulled or merged, so checking the cloud can
+  /// never change the notes on this device. It counts rows, not readable notes:
+  /// an encrypted row still counts while this device is locked, which is what
+  /// makes the on-device and in-cloud numbers comparable.
+  Future<int?> cloudCount() async {
+    if (_userId == null) return null;
     try {
       return await _api.remoteNoteCount();
     } catch (e) {
-      debugPrint('NotesRepository.remoteCount failed: $e');
-      return 0;
+      debugPrint('NotesRepository.cloudCount failed: $e');
+      return null;
     }
   }
 
-  /// Hard-deletes every note row for this user, tombstones included.
+  /// Empties the CLOUD copy of this account's notes and leaves this device alone.
+  ///
+  /// The Server removes the Drive files and the note rows without leaving
+  /// tombstones, so no pull can tell any device to delete its notes. Every note
+  /// here is then at "version 0" in the cloud (it is not there), so an edit or
+  /// [markAllForUpload] writes it again as a new cloud note.
   ///
   /// Deliberately leaves the vault row alone: it holds the phrase verifier, and
   /// dropping it would strand notes still encrypted on other devices.
-  Future<String> wipeRemote() async {
-    final uid = _userId;
-    if (uid == null) return 'Not signed in';
+  Future<WipeOutcome> wipeRemote() async {
+    if (_userId == null) return const WipeOutcome(false, 'Not signed in.');
     try {
       await _api.wipeRemoteNotes();
-      return 'Cloud data deleted successfully';
     } catch (e) {
       lastError = e.toString();
       debugPrint('NotesRepository.wipeRemote failed: $e');
-      return 'Failed to delete data';
+      return const WipeOutcome(false,
+          'Could not wipe the cloud. Check your connection and try again; nothing on this device was changed.');
     }
+    for (final id in _notes.keys.toList()) {
+      _notes[id]?.serverVersion = 0;
+      await _persist(id);
+    }
+    // A saved push refers to cloud versions that no longer exist.
+    await _box.delete(_pendingPushKey);
+    lastSyncedAt = null;
+    notifyListeners();
+    return const WipeOutcome(true,
+        'Cloud notes wiped. The notes on this device are untouched.');
   }
+
+  /// Removes every note from THIS DEVICE only. The cloud copy is not touched, so
+  /// the notes download again on the next sync. Notes that were never uploaded
+  /// are gone for good: [pendingCount] says how many before the caller asks.
+  Future<int> wipeLocalNotes() async {
+    final removed = _notes.length;
+    _notes.clear();
+    _syncCursor = null;
+    lastSyncedAt = null;
+    // Let an in-flight write finish first, or it lands after the clear.
+    await _drainWrites();
+    await _box.clear();
+    final uid = _userId;
+    // Keep the cache tagged with this account so the next load still recognises it.
+    if (uid != null) await _box.put(_ownerKey, uid);
+    notifyListeners();
+    return removed;
+  }
+
+  /// Marks every live note as waiting to upload, so the next sync writes all of
+  /// them to the cloud. Used to refill a cloud that was wiped.
+  Future<int> markAllForUpload() async {
+    var marked = 0;
+    for (final n in _notes.values.toList()) {
+      if (n.deleted) continue;
+      n.dirty = true;
+      marked++;
+      await _persist(n.id);
+    }
+    notifyListeners();
+    return marked;
+  }
+}
+
+/// Result of a wipe: whether it happened, and what to tell the user.
+class WipeOutcome {
+  final bool ok;
+  final String message;
+  const WipeOutcome(this.ok, this.message);
 }

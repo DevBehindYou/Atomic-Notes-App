@@ -145,7 +145,7 @@ class _MainPageState extends State<MainPage> {
         _isLoading = false;
       });
     } else {
-      const MySnackBar(sec: 1000, text: "Cloud Synchronization is Off")
+      const MySnackBar(sec: 1000, text: "Cloud Sync is Off")
           .showMySnackBar(context);
     }
   }

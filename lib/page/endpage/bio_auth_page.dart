@@ -3,6 +3,7 @@
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/component/my_appbar.dart';
+import 'package:atomic_notes/security/screen_security.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +25,7 @@ class _BiomPageState extends State<BiomPage> {
   Box<bool>? _authBox;
   late final LocalAuthentication auth;
   bool isAuthOn = false;
+  bool _noScreenshot = false;
   bool _supportState = false;
 
   @override
@@ -47,7 +49,30 @@ class _BiomPageState extends State<BiomPage> {
     setState(() {
       _authBox = box;
       isAuthOn = box.get('isAuthOn', defaultValue: false) ?? false;
+      _noScreenshot =
+          box.get(ScreenSecurity.prefKey, defaultValue: false) ?? false;
     });
+  }
+
+  Future<void> _setNoScreenshot(bool value) async {
+    final box = _authBox;
+    if (box == null) return;
+    final bool applied = await ScreenSecurity.set(value);
+    if (!mounted) return;
+    if (!applied) {
+      const MySnackBar(
+        text: "This device can't block screenshots",
+        sec: 2500,
+      ).showMySnackBar(context);
+      return;
+    }
+    await box.put(ScreenSecurity.prefKey, value);
+    if (!mounted) return;
+    setState(() => _noScreenshot = value);
+    MySnackBar(
+      text: value ? "Screenshots blocked" : "Screenshots allowed",
+      sec: 2000,
+    ).showMySnackBar(context);
   }
 
   Future<bool> _checkCapability() async {
@@ -171,6 +196,47 @@ class _BiomPageState extends State<BiomPage> {
                     "may fail.",
                     style: AppType.bodySm
                         .copyWith(color: AppColors.onErrorContainer),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpace.lg),
+            SectionHeader(
+              'SCREEN PRIVACY',
+              trailing: DataChip(
+                _noScreenshot ? 'BLOCKED' : 'ALLOWED',
+                active: true,
+                activeColor: _noScreenshot ? AppColors.signal : AppColors.outline,
+              ),
+            ),
+            const SizedBox(height: AppSpace.md),
+            EditorialModule(
+              accent: _noScreenshot,
+              padding: const EdgeInsets.all(AppSpace.md),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        EditorialHeading('No screenshots',
+                            style: AppType.headlineSm),
+                        SizedBox(height: AppSpace.xs),
+                        Text(
+                          "Blocks screenshots and screen recording inside "
+                          "Atomic, and hides its preview in the recent-apps "
+                          "switcher. Takes effect immediately.",
+                          style: AppType.bodySm,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: AppSpace.md),
+                  CupertinoSwitch(
+                    value: _noScreenshot,
+                    activeTrackColor: AppColors.signal,
+                    onChanged: _setNoScreenshot,
                   ),
                 ],
               ),

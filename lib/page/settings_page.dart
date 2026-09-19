@@ -69,7 +69,7 @@ class _SettingsPageState extends State<SettingsPage> {
           // is the only option here that can't lose data.
           if (!_isMounted) return;
           const MySnackBar(
-            text: "Turn on Cloud Synchronization and sync first — "
+            text: "Turn on Cloud Sync and sync first — "
                 "logging out erases the notes on this device",
             sec: 4000,
           ).showMySnackBar(context);
@@ -151,20 +151,20 @@ class _SettingsPageState extends State<SettingsPage> {
               text: "Profile",
             ),
 
-            // notes database section
-            SettingsTiles(
-              action: () {
-                Navigator.pushNamed(context, '/databasepage');
-              },
-              text: "Notes Database",
-            ),
-
-            // clous sync switch
+            // cloud sync: the switch and the Cloud Notes check
             SettingsTiles(
               action: () {
                 Navigator.pushNamed(context, '/cloudsyncpage');
               },
-              text: "Cloud Synchronization",
+              text: "Cloud Sync",
+            ),
+
+            // deleted notes waiting to be restored or removed for good
+            SettingsTiles(
+              action: () {
+                Navigator.pushNamed(context, '/recyclebin');
+              },
+              text: "Recycle Bin",
             ),
 
             // bio auth switch
@@ -191,12 +191,12 @@ class _SettingsPageState extends State<SettingsPage> {
               text: "Atomic Energy",
             ),
 
-            // develpoper option section
+            // the two ways to wipe notes
             SettingsTiles(
               action: () {
-                Navigator.pushNamed(context, '/devoption');
+                Navigator.pushNamed(context, '/dangerzone');
               },
-              text: "More Options",
+              text: "Danger Zone",
             ),
             const SizedBox(height: AppSpace.xl),
 

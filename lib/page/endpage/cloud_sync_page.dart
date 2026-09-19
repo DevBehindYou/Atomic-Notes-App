@@ -81,14 +81,56 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
                       // — which doesn't restart anything, looks like a crash,
                       // and is an App Store rejection reason on iOS.
                       MySnackBar(
-                        text: value
-                            ? "Cloud Synchronization On"
-                            : "Cloud Synchronization Off",
+                        text: value ? "Cloud Sync On" : "Cloud Sync Off",
                         sec: 2000,
                       ).showMySnackBar(context);
                     },
                   ),
                 ],
+              ),
+            ),
+            const SizedBox(height: AppSpace.md),
+            // The cloud check lives here, next to the switch that controls it.
+            GestureDetector(
+              onTap: () => Navigator.pushNamed(context, '/cloudnotes'),
+              behavior: HitTestBehavior.opaque,
+              child: EditorialModule(
+                padding: const EdgeInsets.all(AppSpace.md),
+                child: Row(
+                  children: [
+                    Container(
+                      height: 44,
+                      width: 44,
+                      decoration: const BoxDecoration(
+                        color: AppColors.ink,
+                        borderRadius: AppRadius.std,
+                      ),
+                      child: const Icon(Icons.cloud_sync_outlined,
+                          color: AppColors.paper, size: 22),
+                    ),
+                    const SizedBox(width: AppSpace.md),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          MonoLabel('Check', small: true),
+                          SizedBox(height: 2),
+                          EditorialHeading('Cloud Notes',
+                              style: AppType.headlineSm),
+                          SizedBox(height: AppSpace.xs),
+                          Text(
+                            'Compare this device with the cloud, sync, or '
+                            'refill the cloud.',
+                            style: AppType.bodySm,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: AppSpace.sm),
+                    const Icon(Icons.arrow_forward,
+                        size: 16, color: AppColors.signal),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: AppSpace.lg),

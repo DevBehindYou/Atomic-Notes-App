@@ -102,7 +102,9 @@ class _HomePageState extends State<HomePage> {
     if (!mounted) return;
     setState(_selected.clear);
     MySnackBar(
-      text: n == 1 ? "Note deleted" : "$n notes deleted",
+      text: n == 1
+          ? "Note moved to the Recycle Bin"
+          : "$n notes moved to the Recycle Bin",
       sec: 1500,
     ).showMySnackBar(context);
   }
