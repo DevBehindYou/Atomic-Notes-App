@@ -427,6 +427,7 @@ class NotesRepository extends ChangeNotifier {
     final versions = pending['versions'] as Map;
     var conflicted = false;
     var failed = false;
+    final writtenSeqs = <int>[];
     for (final result in results) {
       final id = result['id'] as String;
       final local = _notes[id];
@@ -447,6 +448,8 @@ class NotesRepository extends ChangeNotifier {
         continue;
       }
       local.serverVersion = (result['version'] as num).toInt();
+      final seq = (result['seq'] as num?)?.toInt();
+      if (seq != null) writtenSeqs.add(seq);
       if (local.updatedAt.toIso8601String() == versions[id]) {
         local.dirty = false;
         local.updatedAt = DateTime.parse(result['updated_at'] as String).toUtc();
@@ -456,6 +459,7 @@ class NotesRepository extends ChangeNotifier {
     }
     if (_userId != uid) return false;
     await _box.delete(_pendingPushKey);
+    await _skipOwnPushedRows(writtenSeqs);
     if (failed) {
       // The pull cursor is already past the version that conflicted, so start over.
       if (conflicted) await _resetCursor();
@@ -468,6 +472,22 @@ class NotesRepository extends ChangeNotifier {
           409);
     }
     return _notes.values.any((n) => n.dirty);
+  }
+
+  /// The rows this push just wrote would come back in the next pull, and each would be read from Drive
+  /// again. When their sequences are exactly the next ones after the cursor, no other device wrote in
+  /// between, so the cursor moves past them. Anything else leaves the cursor alone and the pull as it was.
+  Future<void> _skipOwnPushedRows(List<int> seqs) async {
+    final cursor = _syncCursor;
+    if (cursor == null || seqs.isEmpty) return;
+    seqs.sort();
+    var expected = cursor + 1;
+    for (final seq in seqs) {
+      if (seq != expected) return;
+      expected++;
+    }
+    _syncCursor = seqs.last;
+    await _box.put(_cursorKey, _syncCursor);
   }
 
   Future<void> _pull(String uid) async {
