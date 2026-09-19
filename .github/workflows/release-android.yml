@@ -117,14 +117,26 @@ jobs:
             echo "## Signed release APKs"
             echo
             for apk in app-*-release.apk; do
-              "$APKSIGNER" verify --print-certs "$apk" > "$RUNNER_TEMP/certs.txt"
-              if grep -qi "CN=Android Debug" "$RUNNER_TEMP/certs.txt"; then
+              # The exit status is the signature check. Output is kept whole so any failure is readable.
+              if ! "$APKSIGNER" verify -v --print-certs "$apk" > "$RUNNER_TEMP/certs.txt" 2>&1; then
+                cat "$RUNNER_TEMP/certs.txt"
+                echo "::error::apksigner does not accept the signature of $apk."
+                exit 1
+              fi
+              if grep -qi "Android Debug" "$RUNNER_TEMP/certs.txt"; then
                 echo "::error::$apk is signed with the Android debug key. Refusing to publish it."
+                exit 1
+              fi
+              # Without a readable certificate the debug-key check above proves nothing: stop and show why.
+              if ! grep -qi "certificate" "$RUNNER_TEMP/certs.txt"; then
+                cat "$RUNNER_TEMP/certs.txt"
+                echo "::error::Could not read the signing certificate of $apk from apksigner's output."
                 exit 1
               fi
               echo "### $apk"
               echo '```'
-              grep -E "Signer #1 certificate (DN|SHA-256 digest|SHA-1 digest)" "$RUNNER_TEMP/certs.txt"
+              # Informational only: if the format differs, print the raw output instead of failing.
+              grep -E "^Verified using|Signer #1 certificate (DN|SHA-256|SHA-1)" "$RUNNER_TEMP/certs.txt" || cat "$RUNNER_TEMP/certs.txt"
               sha256sum "$apk"
               echo '```'
             done

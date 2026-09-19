@@ -31,6 +31,12 @@ analysis, debug APK with placeholder credentials). It does not cover this tree.
 - New `.github/workflows/release-android.yml` (manual signed release; never run)
   and a matching section in `CI.md`.
 
+## Signed release status (September 19)
+
+Release key and GitHub secrets/variables exist (values only on the owner's disk and in GitHub). The first
+run built the signed APKs but its verification step failed on a `grep` of `apksigner` output; the
+workflow is fixed locally (uncommitted) and must be pushed and re-run. See the workspace handoff.
+
 ## Before release
 
 Push and read the **Flutter verification** run (analysis, `dart format` issues,
