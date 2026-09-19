@@ -379,9 +379,11 @@ class NotesRepository extends ChangeNotifier {
       }
       return true;
     } on TimeoutException {
+      debugPrint('NotesRepository: sync timed out');
       lastError = 'Sync is taking longer than expected. Your changes are saved; retry to recover the same operation.';
       return false;
     } catch (e) {
+      debugPrint('NotesRepository: sync failed: ${e.runtimeType}: $e');
       lastError = e.toString().contains('note_limit_reached')
           ? 'Note limit reached — delete a note and sync again'
           : e.toString();

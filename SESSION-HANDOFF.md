@@ -24,6 +24,8 @@ analysis, debug APK with placeholder credentials). It does not cover this tree.
   - the pull cursor is stored in Hive per account and reset after vault unlock;
   - repaired a byte that was not valid UTF-8 (cp1252 em dash) that could break
     the build.
+- Sign-in and sync failures are now written to logcat (`adb logcat -s flutter`) with error codes only, and
+  the sign-in screen has friendlier messages for the Server's sign-in error codes. Uncommitted, not compiled.
 - New `test/note_test.dart` (wire format only). The repository logic itself has
   no automated test (singleton `ApiClient` + Hive).
 - New `.github/workflows/release-android.yml` (manual signed release; never run)

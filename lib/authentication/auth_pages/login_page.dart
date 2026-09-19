@@ -37,9 +37,14 @@ class _LoginPageState extends State<LoginPage> {
     } on ApiException catch (e) {
       if (!mounted) return;
       if (e.code == 'cancelled') return; // user dismissed the picker — not an error
+      // Visible in `adb logcat -s flutter`; carries error codes only, never tokens.
+      debugPrint('Sign-in failed: ${e.code} (HTTP ${e.statusCode})');
       MySnackBar(text: _friendly(e), sec: 2500).showMySnackBar(context);
     } catch (e) {
       if (!mounted) return;
+      // A Google PlatformException (for example ApiException: 10 when the signing
+      // certificate is not registered) or a network error ends up here.
+      debugPrint('Sign-in failed unexpectedly: ${e.runtimeType}: $e');
       const MySnackBar(text: 'Unknown error occurred!', sec: 2000)
           .showMySnackBar(context);
     } finally {
@@ -53,6 +58,16 @@ class _LoginPageState extends State<LoginPage> {
         return "Couldn't complete Google sign-in. Please try again.";
       case 'code_exchange_failed':
         return 'Sign-in expired before it finished — please try again.';
+      case 'refresh_token_required':
+        return 'Google did not allow offline access. Sign in again and accept every permission.';
+      case 'incomplete_token_response':
+      case 'invalid_id_token':
+        return "Google's answer could not be verified. Please try again.";
+      case 'internal_error':
+      case 'http_500':
+      case 'http_502':
+      case 'http_503':
+        return 'The Atomic Notes server had a problem. Please try again shortly.';
       default:
         return 'Sign-in failed. Please try again.';
     }
