@@ -282,7 +282,7 @@ class _CloudNotesPageState extends State<CloudNotesPage> {
                 const SizedBox(height: AppSpace.lg),
                 const HairRule(),
                 const SizedBox(height: AppSpace.md),
-                Text(
+                const Text(
                   'Checking the cloud only counts its notes. It never changes '
                   'what is on this device. Sync now and Upload all send only '
                   'the notes you edited and cost ${EnergyService.syncInstantCost} '
