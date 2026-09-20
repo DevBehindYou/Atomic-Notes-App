@@ -24,13 +24,13 @@ class ProConatainer extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          // The chosen avatar, framed in Ink like the logo mark.
+          const Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // The chosen avatar, framed in Ink like the logo mark.
-              const ProfileAvatar(size: 64),
-              const SizedBox(width: AppSpace.md),
-              const Expanded(
+              ProfileAvatar(size: 64),
+              SizedBox(width: AppSpace.md),
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
