@@ -1,5 +1,6 @@
 // ignore_for_file: use_build_context_synchronously, deprecated_member_use
 
+import 'package:atomic_notes/security/two_factor.dart';
 import 'package:atomic_notes/security/vault.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
@@ -67,9 +68,13 @@ class _LockScreenState extends State<LockScreen> {
 
       if (!_mounted) return;
       if (authenticated) {
-        // The device lock has passed. If the vault is still sealed on this
-        // device, ask for the recovery phrase before showing notes.
-        if (Vault.instance.isLocked) {
+        // The device lock has passed. With two-factor on, the code comes next
+        // (and that page continues to the vault or the notes itself). If the
+        // vault is still sealed on this device, ask for the recovery phrase
+        // before showing notes.
+        if (TwoFactor.instance.isArmed) {
+          Navigator.pushReplacementNamed(context, '/twofactorgate');
+        } else if (Vault.instance.isLocked) {
           Navigator.pushReplacementNamed(context, '/vaultunlock',
               arguments: true);
         } else {

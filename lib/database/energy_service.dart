@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/database/energy_models.dart';
+import 'package:atomic_notes/database/note_quota.dart';
 import 'package:flutter/foundation.dart';
 
 /// Single source of truth for Atomic Energy + Atomic Coins on the client.
@@ -10,8 +13,9 @@ import 'package:flutter/foundation.dart';
 /// original SECURITY DEFINER RPCs — see the server's src/lib/energy.ts); the
 /// client can read the balance but the server is what changes it.
 ///
-/// Modular by design: other features call [spend]/[convertCoins] without
-/// importing the Energy screen.
+/// Modular by design: other features call [convertCoins] and
+/// [upgradeNoteLimit] without importing the Energy screen. Sync is charged by
+/// the Server itself when it runs, so nothing here spends energy.
 class EnergyService extends ChangeNotifier {
   EnergyService._();
   static final EnergyService instance = EnergyService._();
@@ -22,19 +26,23 @@ class EnergyService extends ChangeNotifier {
   static const int dailyGrant = 20; // +20 every 24h (server clock)
   // Note: the full capacity (120) is per-user and read from the wallet via the
   // `energyCap` instance getter below — no static constant, to avoid shadowing.
-  static const int syncStandardCost = 5; // hourly/standard sync (4 per grant)
+  static const int syncStandardCost = 5; // automatic sync, once an hour (4 per grant)
   static const int syncInstantCost = 10; // instant sync (2 per grant)
 
   final ApiClient _api = ApiClient.instance;
   String? get _uid => _api.currentUserId;
 
   Wallet _wallet = Wallet.empty;
+  EnergyLimits _limits = const EnergyLimits();
   List<EnergyTx> _history = const [];
   bool _loading = false;
   String? _error;
   String? _boundUser;
 
   Wallet get wallet => _wallet;
+
+  /// The prices and ceilings the Server enforces.
+  EnergyLimits get limits => _limits;
   List<EnergyTx> get history => _history;
   bool get loading => _loading;
   String? get error => _error;
@@ -43,6 +51,19 @@ class EnergyService extends ChangeNotifier {
   int get coins => _wallet.coins;
   int get energy => _wallet.energy;
   int get energyCap => _wallet.energyCap;
+
+  /// How many notes the account may hold, as the Server reports it.
+  int get noteLimit => _wallet.noteLimit;
+
+  /// Another 10 notes can be bought.
+  bool get canRaiseNoteLimit => noteLimit < _limits.noteLimitCeiling;
+
+  /// There are enough coins for the next step.
+  bool get canAffordNoteLimit => coins >= _limits.noteLimitStepCostCoins;
+
+  /// The limit after the next purchase.
+  int get nextNoteLimit => (noteLimit + _limits.noteLimitStep)
+      .clamp(noteLimit, _limits.noteLimitCeiling);
 
   // ---- lifecycle --------------------------------------------------------
 
@@ -70,9 +91,11 @@ class EnergyService extends ChangeNotifier {
   /// Drop in-memory balances (called on logout by SessionGuard).
   void clear() {
     _wallet = Wallet.empty;
+    _limits = const EnergyLimits();
     _history = const [];
     _error = null;
     _boundUser = null;
+    unawaited(NoteQuota.reset());
     notifyListeners();
   }
 
@@ -87,7 +110,7 @@ class EnergyService extends ChangeNotifier {
     try {
       final state = await _api.energyState();
       if (state['wallet'] != null) {
-        _wallet = Wallet.fromMap(Map<String, dynamic>.from(state['wallet'] as Map));
+        _adopt(state);
       }
       _history = (state['history'] as List)
           .map((e) => EnergyTx.fromMap(Map<String, dynamic>.from(e as Map)))
@@ -116,49 +139,49 @@ class EnergyService extends ChangeNotifier {
     }
   }
 
-  /// Spend energy directly. Returns null on success, else a message.
-  Future<String?> spend(int amount, String reason) async {
+  /// Buys the next 10 notes of capacity for coins. Returns null on success, or a
+  /// user-facing message. Safe to repeat: the Server charges a step only once.
+  Future<String?> upgradeNoteLimit() async {
     if (_uid == null) return 'You are signed out.';
+    if (!canRaiseNoteLimit) return 'You already have the most notes possible.';
     try {
-      await _api.energySpend(amount, reason);
+      final state = await _api.upgradeNoteLimit(noteLimit);
+      _adopt(state);
+      notifyListeners();
       await refresh();
       return null;
     } catch (e) {
+      if (e.toString().contains('invalid_amount')) {
+        // The limit this device showed is not the Server's any more.
+        await refresh();
+        return 'Your note limit changed. Check it and try again.';
+      }
       return _friendly(e);
     }
   }
 
-  /// Instant sync: always costs [syncInstantCost] (10). Returns null on success,
-  /// else a message. On success the caller knows the exact amount charged
-  /// ([syncInstantCost]), so it can refund it if the upload later fails.
-  Future<String?> spendInstant() => spend(syncInstantCost, 'Instant sync');
-
-  /// Standard (background) sync: costs [syncStandardCost] (5) at most once per
-  /// hour — free inside the paid hour (server-enforced window). Returns the
-  /// amount actually charged (0 within the free hour, else 5), or null when the
-  /// balance can't cover it. The amount lets the caller refund on upload failure.
-  Future<int?> spendStandard() async {
-    if (_uid == null) return null;
-    try {
-      final charged = await _api.energySpendStandard();
-      await refresh();
-      return charged;
-    } catch (e) {
-      debugPrint('EnergyService.spendStandard failed: $e');
-      return null;
+  /// Takes the wallet and limits from a Server response and keeps the note
+  /// quota in step with them.
+  void _adopt(Map<String, dynamic> state) {
+    final wallet = state['wallet'];
+    if (wallet is Map) {
+      _wallet = Wallet.fromMap(Map<String, dynamic>.from(wallet));
+      unawaited(NoteQuota.setLimit(_wallet.noteLimit));
+    }
+    final limits = state['limits'];
+    if (limits is Map) {
+      _limits = EnergyLimits.fromMap(Map<String, dynamic>.from(limits));
     }
   }
 
-  /// Return energy that was charged for a sync that then failed to upload, so a
-  /// dropped network never costs the user energy. Capped, and a no-op for 0.
-  Future<void> refund(int amount, String reason) async {
-    if (_uid == null || amount <= 0) return;
-    try {
-      await _api.energyRefund(amount, reason);
-      await refresh();
-    } catch (e) {
-      debugPrint('EnergyService.refund failed: $e');
+  @visibleForTesting
+  void debugSet({Wallet? wallet, EnergyLimits? limits}) {
+    if (wallet != null) {
+      _wallet = wallet;
+      unawaited(NoteQuota.setLimit(wallet.noteLimit));
     }
+    if (limits != null) _limits = limits;
+    notifyListeners();
   }
 
   // ---- errors -----------------------------------------------------------
@@ -171,6 +194,9 @@ class EnergyService extends ChangeNotifier {
     final s = e.toString();
     if (s.contains('insufficient_coins')) return 'Not enough Atomic Coins.';
     if (s.contains('insufficient_energy')) return 'Not enough Atomic Energy.';
+    if (s.contains('note_limit_ceiling')) {
+      return 'You already have the most notes possible.';
+    }
     if (s.contains('energy_cap_exceeded')) {
       return 'That would overflow your Energy cap. Use some first.';
     }

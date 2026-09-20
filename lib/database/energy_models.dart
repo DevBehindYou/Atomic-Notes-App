@@ -96,11 +96,15 @@ class Wallet {
   final int energyCap;
   final DateTime? lastDailyGrantAt;
 
+  /// How many notes this account may hold, as the Server enforces it.
+  final int noteLimit;
+
   const Wallet({
     required this.coins,
     required this.energy,
     required this.energyCap,
     required this.lastDailyGrantAt,
+    this.noteLimit = 20,
   });
 
   /// Empty wallet used before the first load / for a fresh account.
@@ -118,9 +122,52 @@ class Wallet {
       coins: asInt(m['coins']),
       energy: asInt(m['energy']),
       energyCap: asInt(m['energy_cap'], 120),
+      noteLimit: asInt(m['note_limit'], 20),
       lastDailyGrantAt: m['last_daily_grant_at'] == null
           ? null
           : DateTime.tryParse('${m['last_daily_grant_at']}')?.toLocal(),
+    );
+  }
+}
+
+/// The prices and ceilings the Server enforces, sent with the wallet so the App
+/// shows what will really happen. The defaults are used until the first load.
+class EnergyLimits {
+  final int noteLimitFree;
+  final int noteLimitStep;
+  final int noteLimitCeiling;
+  final int noteLimitStepCostCoins;
+  final int syncStandardCost;
+  final int syncInstantCost;
+  final int syncStandardIntervalSeconds;
+
+  const EnergyLimits({
+    this.noteLimitFree = 20,
+    this.noteLimitStep = 10,
+    this.noteLimitCeiling = 50,
+    this.noteLimitStepCostCoins = 10,
+    this.syncStandardCost = 5,
+    this.syncInstantCost = 10,
+    this.syncStandardIntervalSeconds = 3600,
+  });
+
+  factory EnergyLimits.fromMap(Map<String, dynamic> m) {
+    int asInt(String key, int fallback) {
+      final v = m[key];
+      return v is num ? v.toInt() : fallback;
+    }
+
+    const d = EnergyLimits();
+    return EnergyLimits(
+      noteLimitFree: asInt('note_limit_free', d.noteLimitFree),
+      noteLimitStep: asInt('note_limit_step', d.noteLimitStep),
+      noteLimitCeiling: asInt('note_limit_ceiling', d.noteLimitCeiling),
+      noteLimitStepCostCoins:
+          asInt('note_limit_step_cost_coins', d.noteLimitStepCostCoins),
+      syncStandardCost: asInt('sync_standard_cost', d.syncStandardCost),
+      syncInstantCost: asInt('sync_instant_cost', d.syncInstantCost),
+      syncStandardIntervalSeconds: asInt(
+          'sync_standard_interval_seconds', d.syncStandardIntervalSeconds),
     );
   }
 }

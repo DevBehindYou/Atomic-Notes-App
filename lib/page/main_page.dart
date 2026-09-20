@@ -3,6 +3,7 @@
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
+import 'package:atomic_notes/utility/component/profile_avatar.dart';
 import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/notification_service.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
@@ -145,7 +146,7 @@ class _MainPageState extends State<MainPage> {
         _isLoading = false;
       });
     } else {
-      const MySnackBar(sec: 1000, text: "Cloud Synchronization is Off")
+      const MySnackBar(sec: 1000, text: "Cloud Sync is Off")
           .showMySnackBar(context);
     }
   }
@@ -177,19 +178,7 @@ class _MainPageState extends State<MainPage> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                height: 34,
-                width: 34,
-                padding: const EdgeInsets.all(2),
-                decoration: const BoxDecoration(
-                  color: AppColors.ink,
-                  borderRadius: AppRadius.std,
-                ),
-                child: ClipRRect(
-                  borderRadius: AppRadius.sm,
-                  child: Image.asset('assets/photo.png', fit: BoxFit.cover),
-                ),
-              ),
+              const ProfileAvatar(size: 34, frame: 2),
               const SizedBox(width: AppSpace.sm + 2),
               ConstrainedBox(
                 constraints: BoxConstraints(

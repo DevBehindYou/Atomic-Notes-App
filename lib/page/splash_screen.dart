@@ -6,6 +6,7 @@ import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/notification_service.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
+import 'package:atomic_notes/security/two_factor.dart';
 import 'package:atomic_notes/security/vault.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
@@ -84,6 +85,13 @@ class _SplashPageState extends State<SplashPage> {
       // local cache was routed past it into the app.
       if (isAuthOn) {
         Navigator.pushReplacementNamed(context, '/lockscreen');
+        return;
+      }
+
+      // Two-factor gate. Like the vault gate below, it is only reached here
+      // when the device lock is off; lock_screen sends its users on itself.
+      if (TwoFactor.instance.isArmed) {
+        Navigator.pushReplacementNamed(context, '/twofactorgate');
         return;
       }
 

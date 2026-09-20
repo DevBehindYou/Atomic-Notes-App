@@ -63,6 +63,9 @@ dependencies:
   cryptography: ^2.7.0
   flutter_secure_storage: ^9.2.2
 
+  # Two-factor setup: the QR code an authenticator app scans.
+  qr_flutter: ^4.1.0
+
 
 
 dev_dependencies:
@@ -115,6 +118,8 @@ flutter:
     - assets/Atomic Icons/Icons-With-label/
     - assets/Atomic Icons/Icons-Without-label/
     - assets/Atomic Icons/Icons-Without-label-2.5D/
+    - assets/Avatars/men/
+    - assets/Avatars/women/
 
   # Technical Editorial type system. Bundled rather than pulled at runtime via
   # google_fonts: this is a local-first app that must render correctly with no

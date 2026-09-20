@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:atomic_notes/authentication/auth_services/cred.dart';
+import 'package:atomic_notes/security/secure_options.dart';
 
 /// Thrown by every ApiClient call on a non-2xx response. `code` is the
 /// server's `error` field when present (e.g. `insufficient_energy`,
@@ -12,7 +13,10 @@ import 'package:atomic_notes/authentication/auth_services/cred.dart';
 class ApiException implements Exception {
   final String code;
   final int statusCode;
-  ApiException(this.code, this.statusCode);
+
+  /// How long the Server asks the caller to wait (a `sync_cooldown` refusal).
+  final int? retryAfterSeconds;
+  ApiException(this.code, this.statusCode, {this.retryAfterSeconds});
   @override
   String toString() => code;
 }
@@ -31,7 +35,8 @@ class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
 
-  static const _storage = FlutterSecureStorage();
+  // Same options as every other secure store, or the token is lost on restart.
+  static const _storage = FlutterSecureStorage(aOptions: kSecureAndroidOptions);
   static const _tokenKey = 'atomic_api_session_token';
   static const _userIdKey = 'atomic_api_user_id';
   static const _userEmailKey = 'atomic_api_user_email';
@@ -102,7 +107,8 @@ class ApiClient {
       _sessionEndedController.add(null);
     }
 
-    throw ApiException(code, res.statusCode);
+    final wait = body is Map ? body['retry_after_seconds'] : null;
+    throw ApiException(code, res.statusCode, retryAfterSeconds: wait is num ? wait.toInt() : null);
   }
 
   Future<void> _saveSession(String token, String userId, String email) async {
@@ -241,18 +247,10 @@ class ApiClient {
     _decode(await http.post(_uri('/energy/convert'), headers: _headers, body: jsonEncode({'coins': coins})));
   }
 
-  Future<void> energySpend(int amount, String reason) async {
-    _decode(await http.post(_uri('/energy/spend'), headers: _headers, body: jsonEncode({'amount': amount, 'reason': reason})));
-  }
-
-  /// Returns the amount actually charged (0 within the free hourly window).
-  Future<int> energySpendStandard() async {
-    final data = _decode(await http.post(_uri('/energy/spend-standard'), headers: _headers)) as Map;
-    return data['charged'] as int;
-  }
-
-  Future<void> energyRefund(int amount, String reason) async {
-    _decode(await http.post(_uri('/energy/refund'), headers: _headers, body: jsonEncode({'amount': amount, 'reason': reason})));
+  /// Buys the next 10 notes of capacity with coins. [fromLimit] is the limit the
+  /// caller shows, which makes a repeated call harmless. Returns the new state.
+  Future<Map<String, dynamic>> upgradeNoteLimit(int fromLimit) async {
+    return _decode(await http.post(_uri('/energy/note-limit'), headers: _headers, body: jsonEncode({'from_limit': fromLimit}))) as Map<String, dynamic>;
   }
 
   // ---- profile ------------------------------------------------------------
