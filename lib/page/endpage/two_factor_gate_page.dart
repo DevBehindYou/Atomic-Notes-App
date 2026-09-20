@@ -236,7 +236,7 @@ class _TwoFactorGatePageState extends State<TwoFactorGatePage> {
       const SizedBox(height: AppSpace.md),
       Center(
         child: ArrowLink(
-          _recovery ? 'Use the authenticator code' : 'Use a recovery code',
+          _recovery ? 'Use authenticator code' : 'Use a recovery code',
           onTap: _busy
               ? null
               : () => setState(() {

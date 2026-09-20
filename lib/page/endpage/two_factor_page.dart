@@ -208,7 +208,14 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
             ],
           ),
         ),
-        const SizedBox(height: AppSpace.md),
+        // The way in comes first: below the fold it would be easy to miss.
+        const SizedBox(height: AppSpace.lg),
+        InkActionButton(
+          label: 'Set up two-factor',
+          icon: Icons.shield_outlined,
+          onTap: _begin,
+        ),
+        const SizedBox(height: AppSpace.lg),
         EditorialModule(
           fill: AppColors.surfaceLow,
           padding: const EdgeInsets.all(AppSpace.md),
@@ -226,12 +233,6 @@ class _TwoFactorPageState extends State<TwoFactorPage> {
                   "account's own two-step verification."),
             ],
           ),
-        ),
-        const SizedBox(height: AppSpace.lg),
-        InkActionButton(
-          label: 'Set up two-factor',
-          icon: Icons.shield_outlined,
-          onTap: _begin,
         ),
       ],
     );
@@ -637,7 +638,7 @@ class _CodePromptDialogState extends State<_CodePromptDialog> {
               const SizedBox(height: AppSpace.sm + 2),
               Center(
                 child: ArrowLink(
-                  _recovery ? 'Use the authenticator code' : 'Use a recovery code',
+                  _recovery ? 'Use authenticator code' : 'Use a recovery code',
                   onTap: _busy
                       ? null
                       : () => setState(() {

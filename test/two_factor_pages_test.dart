@@ -44,6 +44,7 @@ void main() {
 
       // Off: the explanation and the way in.
       expect(find.text('OFF'), findsOneWidget);
+      await tester.ensureVisible(find.text('SET UP TWO-FACTOR'));
       await tester.tap(find.text('SET UP TWO-FACTOR'));
       await _settle(tester);
 
@@ -76,9 +77,11 @@ void main() {
       expect(find.byType(SelectableText), findsNWidgets(8));
 
       // Done stays shut until the codes are marked as saved.
+      await tester.ensureVisible(find.text('DONE'));
       await tester.tap(find.text('DONE'));
       await _settle(tester);
       expect(find.text('SAVE THESE NOW.'), findsOneWidget);
+      await tester.ensureVisible(find.text('I saved these codes somewhere safe'));
       await tester.tap(find.text('I saved these codes somewhere safe'));
       await tester.pump();
       await tester.tap(find.text('DONE'));
@@ -90,6 +93,7 @@ void main() {
 
       // Turning it off asks for a fresh code.
       clock.advance(const Duration(seconds: 30));
+      await tester.ensureVisible(find.text('TURN OFF TWO-FACTOR'));
       await tester.tap(find.text('TURN OFF TWO-FACTOR'));
       await tester.pumpAndSettle();
       final String again =
@@ -107,6 +111,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(home: TwoFactorPage(twoFactor: tf)));
       await _settle(tester);
 
+      await tester.ensureVisible(find.text('SET UP TWO-FACTOR'));
       await tester.tap(find.text('SET UP TWO-FACTOR'));
       await _settle(tester);
       await tester.ensureVisible(find.text('CANCEL'));
