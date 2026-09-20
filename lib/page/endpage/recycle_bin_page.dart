@@ -45,6 +45,15 @@ class _RecycleBinPageState extends State<RecycleBinPage> {
     ).showMySnackBar(context);
   }
 
+  /// Why a delete could not go through: a deletion must reach the cloud first, or the note would come back.
+  String _notSentYet() {
+    final next = repo.nextAutoSyncAt;
+    if (next == null) return 'Could not delete yet. Turn on Cloud Sync and sync first.';
+    final int minutes = (next.difference(DateTime.now()).inSeconds / 60).ceil().clamp(1, 60);
+    return 'This deletion has not reached the cloud yet. It sends in $minutes min, '
+        'or use Sync now in Cloud Notes.';
+  }
+
   void _deleteForever(Note note) {
     final String name = note.title.trim().isEmpty ? 'this note' : '"${note.title.trim()}"';
     showDialog<void>(
@@ -60,7 +69,7 @@ class _RecycleBinPageState extends State<RecycleBinPage> {
           MySnackBar(
             text: removed > 0
                 ? 'Deleted for good'
-                : 'Could not delete yet. Turn on Cloud Sync and sync first.',
+                : _notSentYet(),
             sec: 3000,
           ).showMySnackBar(context);
         },
@@ -90,7 +99,7 @@ class _RecycleBinPageState extends State<RecycleBinPage> {
             MySnackBar(
               text: removed > 0
                   ? 'Recycle Bin emptied'
-                  : 'Could not empty the bin yet. Turn on Cloud Sync and sync first.',
+                  : _notSentYet(),
               sec: 3000,
             ).showMySnackBar(context);
           }

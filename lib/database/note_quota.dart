@@ -2,17 +2,10 @@ import 'package:hive_ce/hive_ce.dart';
 
 /// How many notes this account may hold.
 ///
-/// Deliberately a stored value rather than a constant: the plan is to sell
-/// extra capacity later (watch ads -> coins -> more notes, longer sync
-/// intervals, AI features, task notifications). When that lands, raising a
-/// user's cap is [setLimit] plus whatever grants the entitlement — no change
-/// to the enforcement code.
-///
-/// **This is a client-side cap only.** It stops honest over-use and keeps the
-/// UI honest, but anyone can bypass it by talking to the API directly. The
-/// moment capacity is something people pay for, the real limit has to be
-/// enforced in Postgres — see supabase/migrations/003_note_limit.sql, which
-/// does exactly that and is the number that actually counts.
+/// The Server decides and enforces it: a push that would go over is refused. This
+/// class holds the number the Server last reported (the wallet's `noteLimit`) so
+/// the UI can show `3 / 20` and stop at the limit without a request. It starts at
+/// [freeLimit], and each purchase of capacity moves it up to the Server's ceiling.
 class NoteQuota {
   NoteQuota._();
 
@@ -24,23 +17,30 @@ class NoteQuota {
 
   static Box? _box;
 
+  /// The value in use, kept in memory as well as in the box.
+  static int? _memory;
+
   static Future<void> init() async {
     _box = await Hive.openBox(boxName);
   }
 
   /// Current cap. Counts notes and to-dos together — a checklist is a note.
   static int get limit {
+    final memory = _memory;
+    if (memory != null && memory > 0) return memory;
     final v = _box?.get(_limitKey);
     return v is int && v > 0 ? v : freeLimit;
   }
 
-  /// Raise (or lower) the cap. The hook the future coin system writes to.
+  /// Records the limit the Server reported.
   static Future<void> setLimit(int value) async {
+    _memory = value;
     await _box?.put(_limitKey, value);
   }
 
-  /// Back to the free tier.
+  /// Back to the free tier, for example when the account signs out.
   static Future<void> reset() async {
+    _memory = null;
     await _box?.delete(_limitKey);
   }
 }

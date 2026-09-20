@@ -1,3 +1,4 @@
+import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
@@ -50,7 +51,8 @@ class _CloudNotesPageState extends State<CloudNotesPage> {
     if (_working) return;
     setState(() => _working = true);
     if (uploadAll) await repo.markAllForUpload();
-    final bool ok = await repo.syncNow();
+    // Both buttons on this page are instant sync: they send now and cost 10 energy when there is something to send.
+    final bool ok = await repo.syncNow(instant: true);
     if (!mounted) return;
     setState(() => _working = false);
     MySnackBar(
@@ -60,6 +62,13 @@ class _CloudNotesPageState extends State<CloudNotesPage> {
       sec: 3000,
     ).showMySnackBar(context);
     await _check();
+  }
+
+  /// "Open" when an automatic sync can send now, else how long until it can.
+  static String _autoSyncText(DateTime? next) {
+    if (next == null) return 'Open';
+    final int minutes = (next.difference(DateTime.now()).inSeconds / 60).ceil();
+    return minutes <= 1 ? 'In under a minute' : 'In $minutes min';
   }
 
   static String _stamp(DateTime d) {
@@ -87,8 +96,8 @@ class _CloudNotesPageState extends State<CloudNotesPage> {
       return _Verdict(
         '$waiting waiting',
         waiting == 1
-            ? '1 note on this device is waiting to upload. Sync to send it.'
-            : '$waiting notes on this device are waiting to upload. Sync to send them.',
+            ? '1 edited note is waiting to upload. It sends at the next automatic sync, or now with Sync now.'
+            : '$waiting edited notes are waiting to upload. They send at the next automatic sync, or now with Sync now.',
         AppColors.signal,
       );
     }
@@ -234,6 +243,12 @@ class _CloudNotesPageState extends State<CloudNotesPage> {
                       const SizedBox(height: AppSpace.sm),
                       _LedgerRow(
                           label: 'Cloud Sync', value: syncOn ? 'On' : 'Off'),
+                      const SizedBox(height: AppSpace.sm),
+                      const HairRule(),
+                      const SizedBox(height: AppSpace.sm),
+                      _LedgerRow(
+                          label: 'Automatic sync',
+                          value: _autoSyncText(repo.nextAutoSyncAt)),
                     ],
                   ),
                 ),
@@ -248,7 +263,7 @@ class _CloudNotesPageState extends State<CloudNotesPage> {
                 ),
                 const SizedBox(height: AppSpace.sm + 2),
                 GhostButton(
-                  label: 'Sync now',
+                  label: 'Sync now  ·  ${EnergyService.syncInstantCost} energy',
                   icon: Icons.sync,
                   onTap: (!syncOn || _working || _checking)
                       ? null
@@ -257,7 +272,7 @@ class _CloudNotesPageState extends State<CloudNotesPage> {
                 if (syncOn && cloud != null && cloud < onDevice) ...[
                   const SizedBox(height: AppSpace.sm + 2),
                   GhostButton(
-                    label: 'Upload all to cloud',
+                    label: 'Upload all  ·  ${EnergyService.syncInstantCost} energy',
                     icon: Icons.cloud_upload_outlined,
                     onTap: (_working || _checking)
                         ? null
@@ -267,10 +282,12 @@ class _CloudNotesPageState extends State<CloudNotesPage> {
                 const SizedBox(height: AppSpace.lg),
                 const HairRule(),
                 const SizedBox(height: AppSpace.md),
-                const Text(
+                Text(
                   'Checking the cloud only counts its notes. It never changes '
-                  'what is on this device. A sync sends your changes and '
-                  'fetches new ones; it costs 5 energy at most once an hour.',
+                  'what is on this device. Sync now and Upload all send only '
+                  'the notes you edited and cost ${EnergyService.syncInstantCost} '
+                  'energy; with nothing to send they are free. Automatic sync '
+                  'runs once an hour and costs ${EnergyService.syncStandardCost}.',
                   style: AppType.bodySm,
                 ),
               ],

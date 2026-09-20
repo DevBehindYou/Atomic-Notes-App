@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/database/energy_service.dart';
@@ -64,8 +65,24 @@ class NotesRepository extends ChangeNotifier {
   /// note from Google Drive.
   static const String _cursorKey = '__sync_cursor__';
 
-  /// A push carries at most 20 notes; a sync sends up to this many batches.
+  /// A push carries at most this many notes (the most an account can hold, so
+  /// one upload of everything is one request) and roughly this many bytes, which
+  /// keeps a request under the Server's size limit. A sync sends up to
+  /// [_maxPushBatches] of them.
+  static const int _maxPushRows = 50;
+  static const int _maxPushBytes = 2500000;
   static const int _maxPushBatches = 5;
+
+  /// While set and in the future, the Server has said an automatic (standard)
+  /// sync is not open yet. Instant sync is never blocked.
+  DateTime? _standardBlockedUntil;
+  Timer? _autoRetry;
+
+  /// When the next automatic sync can send changes, or null when it is open now.
+  DateTime? get nextAutoSyncAt {
+    final until = _standardBlockedUntil;
+    return until != null && until.isAfter(DateTime.now()) ? until : null;
+  }
 
   /// Tail of the serialized Hive write queue (see [_persist]). Never fails.
   Future<void> _writeChain = Future<void>.value();
@@ -198,6 +215,9 @@ class NotesRepository extends ChangeNotifier {
   Future<void> stop() async {
     _hourly?.cancel();
     _hourly = null;
+    _autoRetry?.cancel();
+    _autoRetry = null;
+    _standardBlockedUntil = null;
   }
 
   /// Drop the in-memory notes without touching the on-disk cache. Used by the
@@ -214,6 +234,7 @@ class NotesRepository extends ChangeNotifier {
   void dispose() {
     unawaited(_connectivity?.cancel());
     _hourly?.cancel();
+    _autoRetry?.cancel();
     super.dispose();
   }
 
@@ -263,6 +284,8 @@ class NotesRepository extends ChangeNotifier {
 
   Future<void> save(Note note) async {
     note.touch();
+    // Saved without a real change (or edited back to what the cloud holds): nothing to upload.
+    note.settleDirty();
     _notes[note.id] = note;
     await _persist(note.id);
     notifyListeners();
@@ -277,6 +300,7 @@ class NotesRepository extends ChangeNotifier {
       if (n == null) continue;
       n.deleted = true;
       n.touch();
+      n.settleDirty();
       await _persist(n.id);
     }
     notifyListeners();
@@ -339,13 +363,14 @@ class NotesRepository extends ChangeNotifier {
 
   /// Push local changes, then pull remote ones. Safe to call often.
   ///
-  /// Cloud sync is energy-gated. Uploading changes costs energy: [instant] sync
-  /// (the manual button) costs 10 every time; a standard/background sync costs 5
-  /// at most once per hour (free within the paid hour). A sync with nothing to
-  /// upload (receive-only) is free. If the balance can't cover the upload, the
-  /// notes stay safely on the device (still dirty) and nothing is pushed — so at
-  /// zero energy local notes keep working but don't reach the cloud until energy
-  /// is topped up.
+  /// Cloud sync is energy-gated, and only notes that were edited are sent.
+  /// [instant] sync (the manual buttons) costs 10 every time and is always open. An
+  /// automatic (standard) sync costs 5 and the Server allows one per hour; while
+  /// it is closed nothing is sent and the changes wait ([nextAutoSyncAt] says when).
+  /// A sync with nothing to upload (receive-only) is free. If the balance can't
+  /// cover the upload, the notes stay safely on the device (still dirty) and
+  /// nothing is pushed — so at zero energy local notes keep working but don't
+  /// reach the cloud until energy is topped up.
   Future<bool> syncNow({bool instant = false}) async {
     if (_syncing) return true;
     final uid = _userId;
@@ -369,11 +394,17 @@ class NotesRepository extends ChangeNotifier {
       // so a completed sync means every queued change reached the server.
       var drained = false;
       for (var batch = 0; batch < _maxPushBatches && !drained; batch++) {
+        // The Server has closed automatic sync for now: leave the changes waiting.
+        if (!instant && nextAutoSyncAt != null) break;
         drained = !await _push(uid, instant: instant);
       }
       await _pull(uid);
       unawaited(EnergyService.instance.refresh());
       if (!drained) {
+        if (!instant && nextAutoSyncAt != null) {
+          // Not a failure: the changes send at the next automatic sync, or now with instant sync.
+          return false;
+        }
         lastError = '$pendingCount changes are still waiting to sync. Sync again to send the rest.';
         return false;
       }
@@ -384,14 +415,32 @@ class NotesRepository extends ChangeNotifier {
       return false;
     } catch (e) {
       debugPrint('NotesRepository: sync failed: ${e.runtimeType}: $e');
-      lastError = e.toString().contains('note_limit_reached')
-          ? 'Note limit reached — delete a note and sync again'
-          : e.toString();
+      final text = e.toString();
+      lastError = text.contains('note_limit_reached')
+          ? 'Note limit reached — delete a note or add capacity in Atomic Energy'
+          : text.contains('insufficient_energy')
+              ? 'Not enough Atomic Energy for this sync. Your notes stay on this device.'
+              : text;
       return false;
     } finally {
       _syncing = false;
       notifyListeners();
     }
+  }
+
+  /// Remembers that automatic sync is closed for [seconds] (or the usual hour) and
+  /// tries once more just after it opens, so an hourly timer that fires a moment
+  /// early does not cost a whole extra hour.
+  void _startCooldown(int? seconds) {
+    final wait = Duration(
+        seconds: (seconds ?? EnergyService.instance.limits.syncStandardIntervalSeconds).clamp(1, 7200));
+    _standardBlockedUntil = DateTime.now().add(wait);
+    _autoRetry?.cancel();
+    _autoRetry = Timer(wait + const Duration(seconds: 5), () {
+      _standardBlockedUntil = null;
+      unawaited(syncNow());
+    });
+    notifyListeners();
   }
 
   /// Sends one batch. Returns true when more changes are still waiting.
@@ -401,13 +450,37 @@ class NotesRepository extends ChangeNotifier {
     Map<String, dynamic>? pending = saved is Map && saved['userId'] == uid
         ? Map<String, dynamic>.from(saved) : null;
     if (pending == null) {
-      final dirty = _notes.values.where((n) => n.dirty).take(20).map((n) => n.copy()).toList();
-      if (dirty.isEmpty) return false;
-      final rows = await Future.wait(dirty.map((n) => _sealRemote(n, uid)));
+      // A note edited back to what the cloud holds needs no upload.
+      var settled = false;
+      for (final n in _notes.values) {
+        if (n.settleDirty()) {
+          settled = true;
+          unawaited(_persist(n.id));
+        }
+      }
+      final candidates = _notes.values.where((n) => n.dirty).take(_maxPushRows).map((n) => n.copy()).toList();
+      if (candidates.isEmpty) {
+        if (settled) notifyListeners();
+        return false;
+      }
+      final sealed = await Future.wait(candidates.map((n) => _sealRemote(n, uid)));
       if (_userId != uid) return false;
+      // Keep one request under the Server's size limit; the rest goes in the next batch.
+      var bytes = 0;
+      var take = 0;
+      for (final row in sealed) {
+        final size = jsonEncode(row).length;
+        if (take > 0 && bytes + size > _maxPushBytes) break;
+        bytes += size;
+        take++;
+      }
+      final dirty = candidates.sublist(0, take);
+      final rows = sealed.sublist(0, take);
       pending = {
         'requestId': newId(), 'userId': uid, 'instant': instant, 'rows': rows,
         'versions': {for (final n in dirty) n.id: n.updatedAt.toIso8601String()},
+        // What the cloud will hold once this lands, so a later edit can be compared with it.
+        'sigs': {for (final n in dirty) n.id: n.contentSig},
         'conflictIds': {for (final n in dirty) n.id: newId()},
       };
       await _box.put(_pendingPushKey, pending);
@@ -417,6 +490,13 @@ class NotesRepository extends ChangeNotifier {
     try {
       results = await _api.pushNotes(rows, requestId: pending['requestId'] as String, instant: pending['instant'] == true);
     } on ApiException catch (e) {
+      if (e.code == 'sync_cooldown') {
+        // Refused before anything was recorded or charged. Forget this request so the next
+        // try can be made in either mode, and wait for the window the Server named.
+        if (_userId == uid) await _box.delete(_pendingPushKey);
+        _startCooldown(e.retryAfterSeconds);
+        return true;
+      }
       // Validation happens before the operation is charged/recorded. Retry corrected data.
       if (e.statusCode == 400 || ['note_limit_reached', 'insufficient_energy', 'note_id_conflict'].contains(e.code)) {
         if (_userId == uid) await _box.delete(_pendingPushKey);
@@ -448,6 +528,8 @@ class NotesRepository extends ChangeNotifier {
         continue;
       }
       local.serverVersion = (result['version'] as num).toInt();
+      final sent = (pending['sigs'] as Map?)?[id];
+      if (sent is String) local.syncedSig = sent;
       final seq = (result['seq'] as num?)?.toInt();
       if (seq != null) writtenSeqs.add(seq);
       if (local.updatedAt.toIso8601String() == versions[id]) {
@@ -460,6 +542,11 @@ class NotesRepository extends ChangeNotifier {
     if (_userId != uid) return false;
     await _box.delete(_pendingPushKey);
     await _skipOwnPushedRows(writtenSeqs);
+    // The Server takes a standard sync once per hour, so the next one is not open yet.
+    if (!instant && results.any((r) => r['ok'] == true)) {
+      _standardBlockedUntil = DateTime.now().add(
+          Duration(seconds: EnergyService.instance.limits.syncStandardIntervalSeconds));
+    }
     if (failed) {
       // The pull cursor is already past the version that conflicted, so start over.
       if (conflicted) await _resetCursor();
@@ -551,6 +638,8 @@ class NotesRepository extends ChangeNotifier {
     debugPrint('NotesRepository: migrating ${_notes.length} notes into the vault');
     for (final n in _notes.values.toList()) {
       n.dirty = true;
+      // The content is the same but its stored form changes, so it must be sent again.
+      n.syncedSig = '';
       await _persist(n.id);
     }
     notifyListeners();
@@ -603,6 +692,8 @@ class NotesRepository extends ChangeNotifier {
     if (n == null || !n.deleted || isAtLimit) return false;
     n.deleted = false;
     n.touch();
+    // Restored before its deletion was sent: the cloud still has it, so there is nothing to send.
+    n.settleDirty();
     await _persist(id);
     notifyListeners();
     return true;
@@ -676,6 +767,7 @@ class NotesRepository extends ChangeNotifier {
     }
     for (final id in _notes.keys.toList()) {
       _notes[id]?.serverVersion = 0;
+      _notes[id]?.syncedSig = '';
       await _persist(id);
     }
     // A saved push refers to cloud versions that no longer exist.
@@ -711,6 +803,8 @@ class NotesRepository extends ChangeNotifier {
     for (final n in _notes.values.toList()) {
       if (n.deleted) continue;
       n.dirty = true;
+      // Forced: send it even if this device believes the cloud already has it.
+      n.syncedSig = '';
       marked++;
       await _persist(n.id);
     }

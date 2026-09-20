@@ -52,10 +52,11 @@ class _EnergyIntroScreenState extends State<EnergyIntroScreen> {
     _EnergySlide(
       art: _mark('atomic-coin', 'Without-label'),
       eyebrow: 'SYNC COSTS',
-      title: 'Instant or\nstandard.',
-      body: 'Instant sync costs 10 energy; standard background sync costs 5, at '
-          'most once an hour. Run low? Your notes stay safe on the device and '
-          'sync once energy returns.',
+      title: 'Instant or\nautomatic.',
+      body: 'Instant sync costs 10 energy and works any time. Automatic sync '
+          'costs 5 and runs once an hour. Only the notes you edited are sent. '
+          'Run low? Your notes stay safe on the device and sync once energy '
+          'returns.',
     ),
   ];
 

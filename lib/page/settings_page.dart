@@ -78,9 +78,14 @@ class _SettingsPageState extends State<SettingsPage> {
         final synced = await repo.syncNow();
         if (!synced) {
           if (!_isMounted) return;
-          const MySnackBar(
-            text: "Logout cancelled — your notes could not be backed up",
-            sec: 3000,
+          final next = repo.nextAutoSyncAt;
+          MySnackBar(
+            text: next != null
+                ? "Logout cancelled — your changes are not sent yet. Automatic "
+                    "sync opens again in ${(next.difference(DateTime.now()).inSeconds / 60).ceil().clamp(1, 60)} min. "
+                    "To log out now, use Sync now in Cloud Notes first."
+                : "Logout cancelled — your notes could not be backed up",
+            sec: next != null ? 6000 : 3000,
           ).showMySnackBar(context);
           return;
         }

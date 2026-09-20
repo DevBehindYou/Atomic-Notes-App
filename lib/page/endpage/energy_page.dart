@@ -2,10 +2,12 @@
 
 import 'package:atomic_notes/database/energy_models.dart';
 import 'package:atomic_notes/database/energy_service.dart';
+import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/utility/component/atomic_icon.dart';
 import 'package:atomic_notes/utility/component/energy_bar.dart';
+import 'package:atomic_notes/utility/component/logout_dialogbox.dart';
 import 'package:atomic_notes/utility/component/my_appbar.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
 import 'package:flutter/material.dart';
@@ -62,6 +64,34 @@ class _EnergyPageState extends State<EnergyPage> {
     ).showMySnackBar(context);
   }
 
+  Future<void> _raiseLimit() async {
+    final l = energy.limits;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => DialogBoxLogout(
+        text: 'Spend ${l.noteLimitStepCostCoins} coins to raise your note limit '
+            'from ${energy.noteLimit} to ${energy.nextNoteLimit}?',
+        action: () async {
+          final err = await energy.upgradeNoteLimit();
+          if (!mounted) return;
+          MySnackBar(
+            text: err ?? 'You can now keep ${energy.noteLimit} notes.',
+            sec: 3000,
+          ).showMySnackBar(context);
+        },
+      ),
+    );
+  }
+
+  void _needCoins() {
+    MySnackBar(
+      text: 'The next ${energy.limits.noteLimitStep} notes cost '
+          '${energy.limits.noteLimitStepCostCoins} coins. You have ${energy.coins}.',
+      sec: 3000,
+    ).showMySnackBar(context);
+  }
+
   void _buySoon() {
     showModalBottomSheet<void>(
       context: context,
@@ -84,7 +114,8 @@ class _EnergyPageState extends State<EnergyPage> {
             const Text(
               'Atomic Coin purchases need the payment backend (Lemon Squeezy '
               'and Razorpay), which is the next phase. Until it ships, coins '
-              'are not sold in-app. You can support the build on Patreon.',
+              'are not sold in-app. The first pack is planned as 50 Atomic Coins '
+              'for \$3.99. You can support the build on Patreon.',
               style: AppType.bodyMd,
             ),
             const SizedBox(height: AppSpace.lg),
@@ -129,6 +160,8 @@ class _EnergyPageState extends State<EnergyPage> {
                 _energyHero(),
                 const SizedBox(height: AppSpace.sm),
                 _coinsModule(),
+                const SizedBox(height: AppSpace.sm),
+                _capacityModule(),
                 const SizedBox(height: AppSpace.md),
                 GhostButton(
                   label: 'How Atomic Energy works',
@@ -184,8 +217,8 @@ class _EnergyPageState extends State<EnergyPage> {
           ),
           const SizedBox(height: AppSpace.sm),
           Text(
-            '+20 energy every 24h, up to 120. Standard sync 5, instant 10. '
-            'Local notes are always free.',
+            '+20 energy every 24h, up to 120. Automatic sync 5 (once an hour), '
+            'instant sync 10. Local notes are always free.',
             style: AppType.bodySm.copyWith(color: AppColors.outlineVariant),
           ),
         ],
@@ -230,6 +263,91 @@ class _EnergyPageState extends State<EnergyPage> {
             icon: Icons.bolt,
             onTap: noCoins ? null : _convert,
           ),
+        ],
+      ),
+    );
+  }
+
+  /// How many notes the account can hold, and the way to raise it with coins.
+  Widget _capacityModule() {
+    final l = energy.limits;
+    final int used = NotesRepository.instance.count;
+    final int limit = energy.noteLimit;
+    final bool atCeiling = !energy.canRaiseNoteLimit;
+    return EditorialModule(
+      padding: const EdgeInsets.all(AppSpace.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                height: 34,
+                width: 34,
+                decoration: const BoxDecoration(
+                  color: AppColors.ink,
+                  borderRadius: AppRadius.std,
+                ),
+                child: const Icon(Icons.sticky_note_2_outlined,
+                    size: 18, color: AppColors.paper),
+              ),
+              const SizedBox(width: AppSpace.sm + 2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const MonoLabel('NOTE CAPACITY'),
+                    const SizedBox(height: 2),
+                    Text('$used of $limit notes used', style: AppType.bodySm),
+                  ],
+                ),
+              ),
+              Text('$limit', style: AppType.statNumber),
+            ],
+          ),
+          const SizedBox(height: AppSpace.md),
+          Row(
+            children: [
+              for (int v = l.noteLimitFree; v <= l.noteLimitCeiling; v += l.noteLimitStep)
+                Expanded(
+                  child: Container(
+                    key: ValueKey('capacity-$v'),
+                    margin: EdgeInsets.only(
+                        right: v + l.noteLimitStep <= l.noteLimitCeiling ? 4 : 0),
+                    height: 28,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: v <= limit ? AppColors.ink : Colors.transparent,
+                      borderRadius: AppRadius.sm,
+                      border: Border.all(
+                          color: v <= limit ? AppColors.ink : AppColors.outlineVariant,
+                          width: AppStroke.rule),
+                    ),
+                    child: Text(
+                      '$v',
+                      style: AppType.labelMonoSm.copyWith(
+                          color: v <= limit ? AppColors.paper : AppColors.slateData),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpace.sm),
+          Text(
+            atCeiling
+                ? 'This is the most notes an account can hold.'
+                : 'Each step adds ${l.noteLimitStep} notes for '
+                    '${l.noteLimitStepCostCoins} coins, up to ${l.noteLimitCeiling}.',
+            style: AppType.bodySm,
+          ),
+          if (!atCeiling) ...[
+            const SizedBox(height: AppSpace.md),
+            InkActionButton(
+              label: 'Add ${l.noteLimitStep} notes  ·  ${l.noteLimitStepCostCoins} coins',
+              icon: Icons.add,
+              onTap: energy.canAffordNoteLimit ? _raiseLimit : _needCoins,
+            ),
+          ],
         ],
       ),
     );

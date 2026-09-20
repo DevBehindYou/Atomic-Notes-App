@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 /// A note.
@@ -50,6 +51,10 @@ class Note {
   bool dirty;
   int serverVersion;
 
+  /// Local-only: [contentSig] of what the cloud holds for this note, as of the
+  /// last upload or download. Empty when unknown (a note from an older app).
+  String syncedSig;
+
   Note({
     required this.id,
     this.kind = NoteKind.text,
@@ -62,6 +67,7 @@ class Note {
     DateTime? updatedAt,
     this.dirty = false,
     this.serverVersion = 0,
+    this.syncedSig = '',
   })  : items = items ?? [],
         createdAt = createdAt ?? DateTime.now().toUtc(),
         updatedAt = updatedAt ?? DateTime.now().toUtc();
@@ -93,6 +99,40 @@ class Note {
     dirty = true;
   }
 
+  /// A short fingerprint of everything that is synced: kind, title, body, items,
+  /// pinned and deleted. Two notes with the same fingerprint hold the same thing.
+  /// It is a change detector, not a security measure.
+  String get contentSig {
+    final text = jsonEncode([
+      kind.name,
+      title,
+      body,
+      items.map((i) => i.toMap()).toList(),
+      pinned,
+      deleted,
+    ]);
+    // Two independent 32-bit hashes and the length, so an accidental match is not a realistic worry.
+    var a = 0x811c9dc5;
+    var b = 0x9e3779b9;
+    for (final unit in text.codeUnits) {
+      a = ((a ^ unit) * 0x01000193) & 0xffffffff;
+      b = ((b + unit) * 0x85ebca6b) & 0xffffffff;
+      b ^= b >> 13;
+    }
+    return '${text.length.toRadixString(16)}-${a.toRadixString(16)}-${b.toRadixString(16)}';
+  }
+
+  /// Clears [dirty] when the note holds exactly what the cloud already holds,
+  /// for example after an edit that was undone, or a delete that was restored
+  /// before it synced. Nothing is sent for such a note. Returns true if it did.
+  bool settleDirty() {
+    if (dirty && serverVersion > 0 && syncedSig.isNotEmpty && contentSig == syncedSig) {
+      dirty = false;
+      return true;
+    }
+    return false;
+  }
+
   // ---- Hive (local) ----------------------------------------------------
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -106,6 +146,7 @@ class Note {
         'updatedAt': updatedAt.toIso8601String(),
         'dirty': dirty,
         'serverVersion': serverVersion,
+        'syncedSig': syncedSig,
       };
 
   factory Note.fromMap(Map<dynamic, dynamic> m) => Note(
@@ -123,6 +164,7 @@ class Note {
         updatedAt: _parseDate(m['updatedAt']),
         dirty: m['dirty'] == true,
         serverVersion: (m['serverVersion'] as num?)?.toInt() ?? 0,
+        syncedSig: (m['syncedSig'] ?? '').toString(),
       );
 
   // ---- Supabase (remote) -----------------------------------------------
@@ -140,20 +182,24 @@ class Note {
         'created_at': createdAt.toIso8601String(),
       };
 
-  factory Note.fromRemote(Map<dynamic, dynamic> m) => Note(
-        id: m['id'].toString(),
-        kind: (m['kind'] ?? 'text') == 'todo' ? NoteKind.todo : NoteKind.text,
-        title: (m['title'] ?? '').toString(),
-        body: (m['body'] ?? '').toString(),
-        items: _decodeItems(m['items']),
-        pinned: m['pinned'] == true,
-        deleted: m['deleted'] == true,
-        createdAt: _parseDate(m['created_at']),
-        updatedAt: _parseDate(m['updated_at']),
-        // Anything from the server is by definition already pushed.
-        dirty: false,
-        serverVersion: (m['version'] as num?)?.toInt() ?? 0,
-      );
+  factory Note.fromRemote(Map<dynamic, dynamic> m) {
+    final note = Note(
+      id: m['id'].toString(),
+      kind: (m['kind'] ?? 'text') == 'todo' ? NoteKind.todo : NoteKind.text,
+      title: (m['title'] ?? '').toString(),
+      body: (m['body'] ?? '').toString(),
+      items: _decodeItems(m['items']),
+      pinned: m['pinned'] == true,
+      deleted: m['deleted'] == true,
+      createdAt: _parseDate(m['created_at']),
+      updatedAt: _parseDate(m['updated_at']),
+      // Anything from the server is by definition already pushed.
+      dirty: false,
+      serverVersion: (m['version'] as num?)?.toInt() ?? 0,
+    );
+    note.syncedSig = note.contentSig;
+    return note;
+  }
 
   static List<TodoItem> _decodeItems(dynamic raw) {
     if (raw is List) {
@@ -182,6 +228,7 @@ class Note {
         updatedAt: updatedAt,
         dirty: dirty,
         serverVersion: serverVersion,
+        syncedSig: syncedSig,
       );
 }
 
