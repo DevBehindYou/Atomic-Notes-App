@@ -1,269 +1,408 @@
-// ignore_for_file: use_build_context_synchronously, deprecated_member_use, use_super_parameters
-
-import 'package:atomic_notes/theme/app_tokens.dart';
-import 'package:atomic_notes/theme/editorial.dart';
 import 'package:atomic_notes/api/atomic_notes_api.dart';
 import 'package:atomic_notes/authentication/auth_services/auth_service.dart';
+import 'package:atomic_notes/profile/profile_store.dart';
+import 'package:atomic_notes/security/two_factor.dart';
+import 'package:atomic_notes/theme/app_tokens.dart';
+import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/utility/component/avatar_picker_dialog.dart';
 import 'package:atomic_notes/utility/component/my_appbar.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
-import 'package:atomic_notes/utility/component/my_textfield.dart';
+import 'package:atomic_notes/utility/component/profile_avatar.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/svg.dart';
+import 'package:flutter/services.dart';
 
+/// Profile: the picture, the username, and the privacy and security choices.
 class EditProfilePage extends StatefulWidget {
-  const EditProfilePage({Key? key}) : super(key: key);
+  const EditProfilePage({super.key});
 
   @override
   State<EditProfilePage> createState() => _EditProfilePageState();
 }
 
 class _EditProfilePageState extends State<EditProfilePage> {
-  late String? userId = ApiClient.instance.currentUserEmail;
-  final _usernameController = TextEditingController();
-  final AuthServices serve = AuthServices();
-  String? username = "@Loading..";
-  bool _mounted = true;
-  bool _isSwitch = false;
+  final String _email = ApiClient.instance.currentUserEmail ?? '';
+  final TextEditingController _usernameController = TextEditingController();
+  final AuthServices _serve = AuthServices();
+
+  /// The username without the leading "@", or null until it has loaded.
+  String? _username;
+  bool _editing = false;
+  bool _saving = false;
 
   @override
   void initState() {
-    _getUserName();
     super.initState();
-  }
-
-  // get the user name
-  Future<void> _getUserName() async {
-    if (!_mounted) return;
-
-    try {
-      final name = await serve.getUserInfo();
-      if (!_mounted) return;
-      setState(() {
-        username = name;
-      });
-    } catch (e) {
-      if (!_mounted) return;
-      setState(() {
-        username = "@Error";
-      });
-    }
-  }
-
-  Future<void> _sendData() async {
-    if (!_mounted) return;
-
-    final connectivityResult = await Connectivity().checkConnectivity();
-
-    if (connectivityResult.contains(ConnectivityResult.none)) {
-      const MySnackBar(
-        text: "No Internet Connection!",
-        sec: 2000,
-      ).showMySnackBar(context);
-    } else {
-      if (isFilled()) {
-        try {
-          final response = await serve.updateUserInfo(
-              username: _usernameController.text.trim().toLowerCase());
-          MySnackBar(
-            text: response.toString(),
-            sec: 1000,
-          ).showMySnackBar(context);
-          await _getUserName();
-        } catch (e) {
-          const MySnackBar(
-            text: "Error occurred while updating user info",
-            sec: 2000,
-          ).showMySnackBar(context);
-        }
-      } else {
-        const MySnackBar(
-          text: "Please enter your username",
-          sec: 2000,
-        ).showMySnackBar(context);
-      }
-    }
-    if (!_mounted) return;
-    setState(() {
-      _isSwitch = false;
-    });
-  }
-
-  bool isFilled() {
-    return _usernameController.text.trim().isNotEmpty;
-  }
-
-  void _toggleSwitch() {
-    if (!_mounted) return;
-    setState(() {
-      _isSwitch = !_isSwitch;
-    });
+    _loadUsername();
   }
 
   @override
   void dispose() {
-    _mounted = false;
-    _isSwitch = false;
     _usernameController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadUsername() async {
+    final String name = await _serve.getUserInfo();
+    if (!mounted) return;
+    setState(() => _username = name.startsWith('@') ? name.substring(1) : name);
+  }
+
+  void _say(String text, [int ms = 2000]) {
+    MySnackBar(text: text, sec: ms).showMySnackBar(context);
+  }
+
+  void _startEditing() {
+    setState(() {
+      _usernameController.text = _username ?? '';
+      _editing = true;
+    });
+  }
+
+  void _stopEditing() => setState(() => _editing = false);
+
+  Future<void> _copyUsername() async {
+    final String? name = _username;
+    if (name == null) return;
+    await Clipboard.setData(ClipboardData(text: name));
+    if (!mounted) return;
+    _say('Username copied', 1500);
+  }
+
+  Future<void> _save() async {
+    if (_saving) return;
+
+    final List<ConnectivityResult> link =
+        await Connectivity().checkConnectivity();
+    if (!mounted) return;
+    if (link.contains(ConnectivityResult.none)) {
+      _say('No Internet Connection!');
+      return;
+    }
+
+    final String name = _usernameController.text.trim().toLowerCase();
+    if (!_editing || name.isEmpty) {
+      _say('Please enter your username');
+      return;
+    }
+
+    setState(() => _saving = true);
+    try {
+      final String? response = await _serve.updateUserInfo(username: name);
+      if (!mounted) return;
+      _say(response.toString(), 1500);
+      await _loadUsername();
+    } catch (_) {
+      if (!mounted) return;
+      _say('Error occurred while updating user info');
+    }
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      _editing = false;
+    });
+  }
+
+  void _pickAvatar() {
+    showDialog<void>(
+      context: context,
+      builder: (_) => const AvatarPickerDialog(),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.paper,
-      appBar: const MyAppBar(text: "Profile"),
+      appBar: const MyAppBar(text: 'Profile'),
       body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(
+            AppSpace.md, AppSpace.lg, AppSpace.md, AppSpace.xl),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Center(
-              child: Container(
-                margin: const EdgeInsets.symmetric(vertical: 15),
-                height: 180,
-                width: 180,
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceContainer,
-                  borderRadius: BorderRadius.circular(16),
-                ),
+            _identity(),
+            const SizedBox(height: AppSpace.lg),
+            const SectionHeader('ACCOUNT'),
+            const SizedBox(height: AppSpace.md),
+            _account(),
+            const SizedBox(height: AppSpace.lg),
+            const SectionHeader('PRIVACY & SECURITY'),
+            const SizedBox(height: AppSpace.md),
+            _privacy(),
+            const SizedBox(height: AppSpace.lg),
+            InkActionButton(
+              label: 'Save changes',
+              loading: _saving,
+              onTap: _save,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---- identity -----------------------------------------------------------
+
+  Widget _identity() {
+    return Column(
+      children: [
+        Center(
+          child: Semantics(
+            button: true,
+            label: 'Change profile photo',
+            child: GestureDetector(
+              onTap: _pickAvatar,
+              behavior: HitTestBehavior.opaque,
+              child: SizedBox(
+                height: 136,
+                width: 136,
                 child: Stack(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: Image.asset(
-                          "assets/photo.png",
-                          fit: BoxFit.cover,
+                    const Positioned(
+                      left: 4,
+                      top: 4,
+                      child: ProfileAvatar(size: 128, frame: 4),
+                    ),
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        height: 38,
+                        width: 38,
+                        decoration: BoxDecoration(
+                          color: AppColors.paper,
+                          borderRadius: AppRadius.std,
+                          border: Border.all(
+                              color: AppColors.ink, width: AppStroke.hairline),
                         ),
+                        child: const Icon(Icons.photo_camera_outlined,
+                            size: 18, color: AppColors.ink),
                       ),
                     ),
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            SizedBox(
-                              height: 35,
-                              width: 35,
-                              child: Image.asset("assets/logo_x.png"),
-                            ),
-                          ],
-                        )
-                      ],
-                    )
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 20),
-            SizedBox(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.only(left: 20),
-                    child: Text(
-                      "Username",
-                      style: TextStyle(color: AppColors.ink),
-                    ),
-                  ),
-                  // The ConstrainedBox is hoisted above the ternary on purpose,
-                  // and there is deliberately no `Flexible` wrapping it:
-                  //
-                  //  * `Flexible` is a ParentDataWidget and must be a *direct*
-                  //    child of the Row. It used to sit inside this Padding,
-                  //    which threw "Incorrect use of ParentDataWidget" in debug
-                  //    and a TypeError in release the moment _isSwitch flipped.
-                  //  * A Row lays out its non-flex children with an unbounded
-                  //    main axis, so the inner Row below would otherwise get
-                  //    maxWidth: infinity — and a `Flexible` inside an
-                  //    unbounded Row is itself an error. Capping the width here
-                  //    makes that inner `Flexible` (and its ellipsis) valid.
-                  Padding(
-                    padding: const EdgeInsets.only(right: 15),
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: (MediaQuery.sizeOf(context).width - 120)
-                            .clamp(120.0, 250.0),
+          ),
+        ),
+        const SizedBox(height: AppSpace.md),
+        EditorialHeading(
+          _username ?? 'Loading…',
+          style: AppType.headlineLg,
+          align: TextAlign.center,
+          maxLines: 1,
+        ),
+        const SizedBox(height: AppSpace.xs),
+        const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.verified, size: 16, color: AppColors.signal),
+            SizedBox(width: AppSpace.xs + 2),
+            MonoLabel('Verified via Google'),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ---- account ------------------------------------------------------------
+
+  Widget _account() {
+    return EditorialModule(
+      fill: AppColors.surfaceLowest,
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          _Row(
+            label: 'Username',
+            onTap: _editing ? null : _startEditing,
+            value: _editing
+                ? TextField(
+                    controller: _usernameController,
+                    autofocus: true,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _save(),
+                    cursorColor: AppColors.signal,
+                    style: AppType.bodyLg,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      filled: false,
+                      hintText: 'Enter username',
+                      contentPadding: EdgeInsets.symmetric(vertical: 8),
+                      enabledBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(
+                            color: AppColors.ink, width: AppStroke.rule),
                       ),
-                      child: _isSwitch
-                          ? SizedBox(
-                              height: 50,
-                              child: MyTextField(
-                                  ico: const Icon(Icons.person),
-                                  hintText: "Enter username",
-                                  controller: _usernameController),
-                            )
-                          : GestureDetector(
-                              onTap: _toggleSwitch,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      username!.substring(1),
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          color: AppColors.ink),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 5),
-                                  SvgPicture.asset(
-                                    'assets/forward_arrow.svg',
-                                    colorFilter: const ColorFilter.mode(
-                                        AppColors.ink, BlendMode.srcIn),
-                                  ),
-                                ],
-                              ),
-                            ),
+                      focusedBorder: UnderlineInputBorder(
+                        borderSide: BorderSide(
+                            color: AppColors.signal, width: AppStroke.offset),
+                      ),
                     ),
                   )
-                ],
+                : Text(_username ?? 'Loading…',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppType.bodyMedium15),
+            trailing: _editing
+                ? _SquareIcon(
+                    icon: Icons.close, label: 'Cancel', onTap: _stopEditing)
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _SquareIcon(
+                        icon: Icons.content_copy_outlined,
+                        label: 'Copy username',
+                        onTap: _copyUsername,
+                      ),
+                      const SizedBox(width: AppSpace.sm),
+                      const Icon(Icons.chevron_right,
+                          size: 20, color: AppColors.outline),
+                    ],
+                  ),
+          ),
+          const HairRule(),
+          _Row(
+            label: 'Email',
+            value: Text(_email.isEmpty ? '—' : _email,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: AppType.bodyMedium15),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---- privacy and security -----------------------------------------------
+
+  Widget _privacy() {
+    return AnimatedBuilder(
+      animation: Listenable.merge([ProfileStore.instance, TwoFactor.instance]),
+      builder: (context, _) {
+        final bool armed = TwoFactor.instance.isArmed;
+        return EditorialModule(
+          fill: AppColors.surfaceLowest,
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              // Shown for the look of the profile only: nothing else in the app
+              // reads it.
+              _Row(
+                label: 'Public profile',
+                value: const Text('Allow others to discover your profile',
+                    style: AppType.bodySm),
+                trailing: CupertinoSwitch(
+                  value: ProfileStore.instance.publicProfile,
+                  activeTrackColor: AppColors.signal,
+                  onChanged: ProfileStore.instance.setPublicProfile,
+                ),
               ),
-            ),
-            const Divider(
-              height: 35,
-              indent: 20,
-              endIndent: 20,
-              color: AppColors.outlineVariant,
-            ),
-            SizedBox(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              const HairRule(),
+              _Row(
+                label: 'Two-factor authentication',
+                onTap: () => Navigator.pushNamed(context, '/twofactor'),
+                value: Text(
+                  armed ? 'Enabled' : 'Off',
+                  style: armed
+                      ? AppType.bodySm.copyWith(
+                          color: AppColors.signal, fontWeight: FontWeight.w600)
+                      : AppType.bodySm,
+                ),
+                trailing: const Icon(Icons.chevron_right,
+                    size: 20, color: AppColors.outline),
+              ),
+              const HairRule(),
+              // Google is the only sign-in there is; the row is informational.
+              const _Row(
+                label: 'Connected accounts',
+                value: Text('Google', style: AppType.bodySm),
+                trailing: DataChip('Connected',
+                    active: true, activeColor: AppColors.signal),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// One line of a settings module: a mono label over its value, with something
+/// at the end. The whole row is tappable when [onTap] is set.
+class _Row extends StatelessWidget {
+  final String label;
+  final Widget value;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+
+  const _Row({
+    required this.label,
+    required this.value,
+    this.trailing,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpace.md, vertical: AppSpace.md - 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.only(left: 20),
-                    child: Text(
-                      "Email",
-                      style: TextStyle(color: AppColors.ink),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(right: 20),
-                    child: Text(
-                      userId!,
-                      style: const TextStyle(color: AppColors.ink),
-                    ),
-                  ),
+                  MonoLabel(label, small: true),
+                  const SizedBox(height: AppSpace.xs),
+                  value,
                 ],
               ),
             ),
-            const Divider(
-              height: 35,
-              indent: 20,
-              endIndent: 20,
-              color: AppColors.outlineVariant,
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpace.screenMargin, vertical: AppSpace.sm),
-              child: InkActionButton(
-                label: 'Save changes',
-                onTap: _sendData,
-              ),
-            ),
+            if (trailing != null) ...[
+              const SizedBox(width: AppSpace.sm),
+              trailing!,
+            ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A small square icon button, the copy affordance of the reference layout.
+class _SquareIcon extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _SquareIcon({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: label,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          height: 36,
+          width: 36,
+          decoration: const BoxDecoration(
+            color: AppColors.surfaceContainer,
+            borderRadius: AppRadius.std,
+          ),
+          child: Icon(icon, size: 18, color: AppColors.ink),
         ),
       ),
     );

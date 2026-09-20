@@ -12,7 +12,7 @@ import 'package:atomic_notes/utility/component/logout_dialogbox.dart';
 import 'package:atomic_notes/utility/component/my_snackbar.dart';
 import 'package:atomic_notes/utility/component/profile_container.dart';
 import 'package:atomic_notes/utility/app_info.dart';
-import 'package:atomic_notes/utility/component/settings_tiles.dart';
+import 'package:atomic_notes/utility/component/settings_card.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_ce/hive_ce.dart';
 
@@ -114,6 +114,23 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  /// Two cards side by side, the same height however much text each holds.
+  Widget _cardRow(Widget left, Widget right) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpace.sm + 4),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: left),
+            const SizedBox(width: AppSpace.sm + 4),
+            Expanded(child: right),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -143,60 +160,74 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: AppSpace.lg),
             const SectionHeader('MANAGE'),
 
-            // profile page section
-            SettingsTiles(
-              action: () {
-                Navigator.pushNamed(context, '/editprofilepage');
+            const SizedBox(height: AppSpace.md),
+            AnimatedBuilder(
+              animation: repo,
+              builder: (context, _) {
+                final int binned = repo.binNotes.length;
+                return Column(
+                  children: [
+                    _cardRow(
+                      SettingsCard(
+                        icon: Icons.person_outline,
+                        title: 'Profile',
+                        caption: 'Photo, name, 2FA',
+                        onTap: () =>
+                            Navigator.pushNamed(context, '/editprofilepage'),
+                      ),
+                      SettingsCard(
+                        icon: Icons.cloud_sync_outlined,
+                        title: 'Cloud Sync',
+                        caption: 'Drive backup',
+                        onTap: () =>
+                            Navigator.pushNamed(context, '/cloudsyncpage'),
+                      ),
+                    ),
+                    _cardRow(
+                      SettingsCard(
+                        icon: Icons.delete_outline,
+                        title: 'Recycle Bin',
+                        caption: binned == 0 ? 'Empty' : '$binned deleted',
+                        onTap: () =>
+                            Navigator.pushNamed(context, '/recyclebin'),
+                      ),
+                      SettingsCard(
+                        icon: Icons.lock_outline,
+                        title: 'Security',
+                        caption: 'Lock, screenshots',
+                        onTap: () =>
+                            Navigator.pushNamed(context, '/biompage'),
+                      ),
+                    ),
+                    _cardRow(
+                      SettingsCard(
+                        icon: Icons.enhanced_encryption_outlined,
+                        title: 'Encryption',
+                        caption: 'End-to-end',
+                        onTap: () =>
+                            Navigator.pushNamed(context, '/encryptionpage'),
+                      ),
+                      SettingsCard(
+                        icon: Icons.bolt_outlined,
+                        title: 'Atomic Energy',
+                        caption: 'Coins, quota',
+                        onTap: () =>
+                            Navigator.pushNamed(context, '/energypage'),
+                      ),
+                    ),
+                    // The destructive entry stands apart, on its own row.
+                    SettingsCard(
+                      icon: Icons.warning_amber_rounded,
+                      title: 'Danger Zone',
+                      caption: 'Wipe cloud or this device',
+                      danger: true,
+                      wide: true,
+                      onTap: () =>
+                          Navigator.pushNamed(context, '/dangerzone'),
+                    ),
+                  ],
+                );
               },
-              text: "Profile",
-            ),
-
-            // cloud sync: the switch and the Cloud Notes check
-            SettingsTiles(
-              action: () {
-                Navigator.pushNamed(context, '/cloudsyncpage');
-              },
-              text: "Cloud Sync",
-            ),
-
-            // deleted notes waiting to be restored or removed for good
-            SettingsTiles(
-              action: () {
-                Navigator.pushNamed(context, '/recyclebin');
-              },
-              text: "Recycle Bin",
-            ),
-
-            // bio auth switch
-            SettingsTiles(
-              action: () {
-                Navigator.pushNamed(context, '/biompage');
-              },
-              text: "Security",
-            ),
-
-            // end-to-end encryption
-            SettingsTiles(
-              action: () {
-                Navigator.pushNamed(context, '/encryptionpage');
-              },
-              text: "Encryption",
-            ),
-
-            // atomic energy + coins
-            SettingsTiles(
-              action: () {
-                Navigator.pushNamed(context, '/energypage');
-              },
-              text: "Atomic Energy",
-            ),
-
-            // the two ways to wipe notes
-            SettingsTiles(
-              action: () {
-                Navigator.pushNamed(context, '/dangerzone');
-              },
-              text: "Danger Zone",
             ),
             const SizedBox(height: AppSpace.xl),
 

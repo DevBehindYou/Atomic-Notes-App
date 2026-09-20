@@ -1,5 +1,6 @@
 import 'package:atomic_notes/theme/app_tokens.dart';
 import 'package:atomic_notes/theme/editorial.dart';
+import 'package:atomic_notes/utility/component/profile_avatar.dart';
 import 'package:flutter/material.dart';
 
 /// Account module on the settings screen: avatar framed in an Ink block on the
@@ -26,20 +27,8 @@ class ProConatainer extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Avatar in an Ink frame, matching how the logo mark is treated.
-              Container(
-                height: 64,
-                width: 64,
-                padding: const EdgeInsets.all(3),
-                decoration: const BoxDecoration(
-                  color: AppColors.ink,
-                  borderRadius: AppRadius.std,
-                ),
-                child: ClipRRect(
-                  borderRadius: AppRadius.sm,
-                  child: Image.asset('assets/photo.png', fit: BoxFit.cover),
-                ),
-              ),
+              // The chosen avatar, framed in Ink like the logo mark.
+              const ProfileAvatar(size: 64),
               const SizedBox(width: AppSpace.md),
               const Expanded(
                 child: Column(

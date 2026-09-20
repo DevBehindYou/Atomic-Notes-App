@@ -6,6 +6,7 @@ import 'package:atomic_notes/authentication/auth_services/session_guard.dart';
 import 'package:atomic_notes/database/note_quota.dart';
 import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/database/sync_status.dart';
+import 'package:atomic_notes/profile/profile_store.dart';
 import 'package:atomic_notes/security/screen_security.dart';
 import 'package:atomic_notes/security/vault.dart';
 import 'package:atomic_notes/page/endpage/about_us_page.dart';
@@ -19,6 +20,8 @@ import 'package:atomic_notes/page/endpage/recycle_bin_page.dart';
 import 'package:atomic_notes/page/endpage/vault_unlock_page.dart';
 import 'package:atomic_notes/page/endpage/edit_profile_page.dart';
 import 'package:atomic_notes/page/endpage/t_and_c_page.dart';
+import 'package:atomic_notes/page/endpage/two_factor_gate_page.dart';
+import 'package:atomic_notes/page/endpage/two_factor_page.dart';
 import 'package:atomic_notes/page/home_page.dart';
 import 'package:atomic_notes/page/endpage/lock_screen.dart';
 import 'package:atomic_notes/page/logout_screen.dart';
@@ -56,6 +59,8 @@ Future<void> main() async {
     await Hive.openBox<bool>('authBox');
     // "No screenshots" is a device-wide choice: apply it before any screen shows.
     await ScreenSecurity.applySaved();
+    // Avatar and profile switches are local: read them before any screen draws.
+    await ProfileStore.instance.init();
     await Hive.openBox<bool>('syncBox');
     await SyncStatusHelper.init();
     await NoteQuota.init();
@@ -178,6 +183,8 @@ class _MyAppState extends State<MyApp> {
         '/energyintro': (context) => const EnergyIntroScreen(),
         '/appinfo': (context) => const AppInfo(),
         '/lockscreen': (context) => const LockScreen(),
+        '/twofactor': (context) => const TwoFactorPage(),
+        '/twofactorgate': (context) => const TwoFactorGatePage(),
         '/dangerzone': (context) => const DangerZonePage(),
         '/cloudnotes': (context) => const CloudNotesPage(),
         '/recyclebin': (context) => const RecycleBinPage(),
