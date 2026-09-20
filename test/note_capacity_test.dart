@@ -9,8 +9,9 @@ import 'package:atomic_notes/page/endpage/energy_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// Tall on purpose: the whole screen is on view, so nothing has to be scrolled to.
 void _phone(WidgetTester tester) {
-  tester.view.physicalSize = const Size(1080, 2400);
+  tester.view.physicalSize = const Size(1080, 4800);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -92,7 +93,6 @@ void main() {
       _phone(tester);
       await tester.pumpWidget(const MaterialApp(home: EnergyPage()));
       await tester.pump();
-      await tester.ensureVisible(find.text('NOTE CAPACITY'));
     }
 
     testWidgets('shows the four steps and offers the next one', (tester) async {
@@ -110,7 +110,6 @@ void main() {
       _wallet();
       await open(tester);
 
-      await tester.ensureVisible(find.text('ADD 10 NOTES  ·  10 COINS'));
       await tester.tap(find.text('ADD 10 NOTES  ·  10 COINS'));
       await tester.pumpAndSettle();
       expect(
@@ -129,7 +128,6 @@ void main() {
       _wallet(coins: 2);
       await open(tester);
 
-      await tester.ensureVisible(find.text('ADD 10 NOTES  ·  10 COINS'));
       await tester.tap(find.text('ADD 10 NOTES  ·  10 COINS'));
       await tester.pump();
       expect(find.text('The next 10 notes cost 10 coins. You have 2.'),
