@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:atomic_notes/api/atomic_notes_api.dart';
+import 'package:atomic_notes/security/secure_options.dart';
 import 'package:atomic_notes/security/totp.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
@@ -26,7 +27,7 @@ class DeviceTwoFactorStorage implements TwoFactorStorage {
   const DeviceTwoFactorStorage();
 
   static const FlutterSecureStorage _secure = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    aOptions: kSecureAndroidOptions,
     iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
   );
 

@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:atomic_notes/authentication/auth_services/cred.dart';
+import 'package:atomic_notes/security/secure_options.dart';
 
 /// Thrown by every ApiClient call on a non-2xx response. `code` is the
 /// server's `error` field when present (e.g. `insufficient_energy`,
@@ -31,7 +32,8 @@ class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
 
-  static const _storage = FlutterSecureStorage();
+  // Same options as every other secure store, or the token is lost on restart.
+  static const _storage = FlutterSecureStorage(aOptions: kSecureAndroidOptions);
   static const _tokenKey = 'atomic_api_session_token';
   static const _userIdKey = 'atomic_api_user_id';
   static const _userEmailKey = 'atomic_api_user_email';

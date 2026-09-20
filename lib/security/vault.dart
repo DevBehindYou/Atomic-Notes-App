@@ -5,6 +5,7 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import 'package:atomic_notes/security/secure_options.dart';
 import 'seed_phrase.dart';
 import 'vault_crypto.dart';
 
@@ -59,7 +60,7 @@ class Vault {
   static const int kdfParallelism = 1;
 
   final FlutterSecureStorage _secure = const FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    aOptions: kSecureAndroidOptions,
     iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
   );
 
