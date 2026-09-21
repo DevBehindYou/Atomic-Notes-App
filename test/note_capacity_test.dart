@@ -5,6 +5,7 @@
 import 'package:atomic_notes/database/energy_models.dart';
 import 'package:atomic_notes/database/energy_service.dart';
 import 'package:atomic_notes/database/note_quota.dart';
+import 'package:atomic_notes/database/notes_repository.dart';
 import 'package:atomic_notes/page/endpage/energy_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -85,6 +86,20 @@ void main() {
     test('the note quota follows the wallet', () {
       _wallet(noteLimit: 40);
       expect(NoteQuota.limit, 40);
+    });
+
+    test('the notes screen hears about a new limit at once', () {
+      int heard = 0;
+      void listener() => heard++;
+      NotesRepository.instance.addListener(listener);
+      addTearDown(() => NotesRepository.instance.removeListener(listener));
+
+      _wallet(noteLimit: 30);
+      expect(NotesRepository.instance.usageLabel, '0 / 30');
+      expect(heard, 1);
+      // The same limit again is not news.
+      _wallet(noteLimit: 30);
+      expect(heard, 1);
     });
   });
 

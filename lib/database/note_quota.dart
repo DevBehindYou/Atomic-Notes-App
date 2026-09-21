@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:hive_ce/hive_ce.dart';
 
 /// How many notes this account may hold.
@@ -20,8 +21,13 @@ class NoteQuota {
   /// The value in use, kept in memory as well as in the box.
   static int? _memory;
 
+  /// The current limit, announced whenever it changes so a screen that shows
+  /// `3 / 20` moves to `3 / 30` at once instead of at the next restart.
+  static final ValueNotifier<int> changes = ValueNotifier<int>(freeLimit);
+
   static Future<void> init() async {
     _box = await Hive.openBox(boxName);
+    changes.value = limit;
   }
 
   /// Current cap. Counts notes and to-dos together — a checklist is a note.
@@ -35,12 +41,14 @@ class NoteQuota {
   /// Records the limit the Server reported.
   static Future<void> setLimit(int value) async {
     _memory = value;
+    changes.value = value;
     await _box?.put(_limitKey, value);
   }
 
   /// Back to the free tier, for example when the account signs out.
   static Future<void> reset() async {
     _memory = null;
+    changes.value = freeLimit;
     await _box?.delete(_limitKey);
   }
 }

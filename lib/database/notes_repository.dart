@@ -30,7 +30,10 @@ import 'package:hive_ce/hive_ce.dart';
 /// worth restoring deliberately (websocket push, or at least shorter polling)
 /// rather than treating this comment as still accurate.
 class NotesRepository extends ChangeNotifier {
-  NotesRepository._();
+  NotesRepository._() {
+    // The note limit comes from the Server's wallet; the notes screens show it, so they must hear when it moves.
+    NoteQuota.changes.addListener(notifyListeners);
+  }
   static final NotesRepository instance = NotesRepository._();
 
   static const String boxName = 'notesBox';
