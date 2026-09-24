@@ -130,22 +130,57 @@ class Wallet {
   }
 }
 
+/// One tier of note capacity: a limit, its display name, and the coins it
+/// costs to reach from the tier before it (0 for the free starting tier).
+class NoteLimitTier {
+  final int limit;
+  final String name;
+  final int costCoins;
+
+  const NoteLimitTier({
+    required this.limit,
+    required this.name,
+    required this.costCoins,
+  });
+
+  factory NoteLimitTier.fromMap(Map<String, dynamic> m) {
+    int asInt(String key, int fallback) {
+      final v = m[key];
+      return v is num ? v.toInt() : fallback;
+    }
+
+    return NoteLimitTier(
+      limit: asInt('limit', 20),
+      name: '${m['name'] ?? ''}',
+      costCoins: asInt('cost_coins', 0),
+    );
+  }
+}
+
 /// The prices and ceilings the Server enforces, sent with the wallet so the App
 /// shows what will really happen. The defaults are used until the first load.
 class EnergyLimits {
   final int noteLimitFree;
-  final int noteLimitStep;
   final int noteLimitCeiling;
-  final int noteLimitStepCostCoins;
+  final List<NoteLimitTier> tiers;
   final int syncStandardCost;
   final int syncInstantCost;
   final int syncStandardIntervalSeconds;
 
+  /// Matches the Server's NOTE_LIMIT_TIERS default, so the screen shows the
+  /// right shape before the first load, not just the right free/ceiling numbers.
+  static const List<NoteLimitTier> defaultTiers = [
+    NoteLimitTier(limit: 20, name: 'Tachyon', costCoins: 0),
+    NoteLimitTier(limit: 30, name: 'God', costCoins: 10),
+    NoteLimitTier(limit: 40, name: 'Antimatter', costCoins: 10),
+    NoteLimitTier(limit: 50, name: 'Monopole', costCoins: 10),
+    NoteLimitTier(limit: 100, name: 'Strangelet', costCoins: 50),
+  ];
+
   const EnergyLimits({
     this.noteLimitFree = 20,
-    this.noteLimitStep = 10,
-    this.noteLimitCeiling = 50,
-    this.noteLimitStepCostCoins = 10,
+    this.noteLimitCeiling = 100,
+    this.tiers = defaultTiers,
     this.syncStandardCost = 5,
     this.syncInstantCost = 10,
     this.syncStandardIntervalSeconds = 3600,
@@ -158,12 +193,16 @@ class EnergyLimits {
     }
 
     const d = EnergyLimits();
+    final rawTiers = m['note_limit_tiers'];
+    final tiers = rawTiers is List && rawTiers.isNotEmpty
+        ? rawTiers
+            .map((e) => NoteLimitTier.fromMap(Map<String, dynamic>.from(e as Map)))
+            .toList()
+        : d.tiers;
     return EnergyLimits(
       noteLimitFree: asInt('note_limit_free', d.noteLimitFree),
-      noteLimitStep: asInt('note_limit_step', d.noteLimitStep),
       noteLimitCeiling: asInt('note_limit_ceiling', d.noteLimitCeiling),
-      noteLimitStepCostCoins:
-          asInt('note_limit_step_cost_coins', d.noteLimitStepCostCoins),
+      tiers: tiers,
       syncStandardCost: asInt('sync_standard_cost', d.syncStandardCost),
       syncInstantCost: asInt('sync_instant_cost', d.syncInstantCost),
       syncStandardIntervalSeconds: asInt(

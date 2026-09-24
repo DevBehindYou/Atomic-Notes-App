@@ -65,13 +65,14 @@ class _EnergyPageState extends State<EnergyPage> {
   }
 
   Future<void> _raiseLimit() async {
-    final l = energy.limits;
+    final t = energy.nextTier;
+    if (t == null) return;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => DialogBoxLogout(
-        text: 'Spend ${l.noteLimitStepCostCoins} coins to raise your note limit '
-            'from ${energy.noteLimit} to ${energy.nextNoteLimit}?',
+        text: 'Spend ${t.costCoins} coins to raise your note limit '
+            'from ${energy.noteLimit} to ${t.limit} (${t.name})?',
         action: () async {
           final err = await energy.upgradeNoteLimit();
           if (!mounted) return;
@@ -85,9 +86,11 @@ class _EnergyPageState extends State<EnergyPage> {
   }
 
   void _needCoins() {
+    final t = energy.nextTier;
+    if (t == null) return;
     MySnackBar(
-      text: 'The next ${energy.limits.noteLimitStep} notes cost '
-          '${energy.limits.noteLimitStepCostCoins} coins. You have ${energy.coins}.',
+      text: 'The next tier (${t.name}, ${t.limit} notes) costs '
+          '${t.costCoins} coins. You have ${energy.coins}.',
       sec: 3000,
     ).showMySnackBar(context);
   }
@@ -308,25 +311,25 @@ class _EnergyPageState extends State<EnergyPage> {
           const SizedBox(height: AppSpace.md),
           Row(
             children: [
-              for (int v = l.noteLimitFree; v <= l.noteLimitCeiling; v += l.noteLimitStep)
+              for (final t in l.tiers)
                 Expanded(
                   child: Container(
-                    key: ValueKey('capacity-$v'),
+                    key: ValueKey('capacity-${t.limit}'),
                     margin: EdgeInsets.only(
-                        right: v + l.noteLimitStep <= l.noteLimitCeiling ? 4 : 0),
+                        right: t.limit != l.tiers.last.limit ? 4 : 0),
                     height: 28,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: v <= limit ? AppColors.ink : Colors.transparent,
+                      color: t.limit <= limit ? AppColors.ink : Colors.transparent,
                       borderRadius: AppRadius.sm,
                       border: Border.all(
-                          color: v <= limit ? AppColors.ink : AppColors.outlineVariant,
+                          color: t.limit <= limit ? AppColors.ink : AppColors.outlineVariant,
                           width: AppStroke.rule),
                     ),
                     child: Text(
-                      '$v',
+                      '${t.limit}',
                       style: AppType.labelMonoSm.copyWith(
-                          color: v <= limit ? AppColors.paper : AppColors.slateData),
+                          color: t.limit <= limit ? AppColors.paper : AppColors.slateData),
                     ),
                   ),
                 ),
@@ -336,14 +339,15 @@ class _EnergyPageState extends State<EnergyPage> {
           Text(
             atCeiling
                 ? 'This is the most notes an account can hold.'
-                : 'Each step adds ${l.noteLimitStep} notes for '
-                    '${l.noteLimitStepCostCoins} coins, up to ${l.noteLimitCeiling}.',
+                : 'Next: ${energy.nextTier!.name} — ${energy.nextTier!.limit} notes for '
+                    '${energy.nextTier!.costCoins} coins.',
             style: AppType.bodySm,
           ),
           if (!atCeiling) ...[
             const SizedBox(height: AppSpace.md),
             InkActionButton(
-              label: 'Add ${l.noteLimitStep} notes  ·  ${l.noteLimitStepCostCoins} coins',
+              label:
+                  'Unlock ${energy.nextTier!.name}  ·  ${energy.nextTier!.limit} notes  ·  ${energy.nextTier!.costCoins} coins',
               icon: Icons.add,
               onTap: energy.canAffordNoteLimit ? _raiseLimit : _needCoins,
             ),
